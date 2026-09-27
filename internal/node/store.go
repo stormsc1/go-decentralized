@@ -11,6 +11,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"go-decentralized/internal/store"
+	_ "go-decentralized/internal/store/sqlite" // the drivers compiled into the node
 	"go-decentralized/module"
 )
 
