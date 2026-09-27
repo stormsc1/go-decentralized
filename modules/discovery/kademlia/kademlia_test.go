@@ -1,6 +1,7 @@
 package kademlia
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -11,8 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"go-decentralized/internal/api"
-	"go-decentralized/internal/module"
+	"go-decentralized/module"
 )
 
 func TestTableKeepsLongLivedContacts(t *testing.T) {
@@ -53,44 +53,51 @@ func TestClosestOrdersByXORDistance(t *testing.T) {
 }
 
 func TestRecordSignature(t *testing.T) {
-	_, key, _ := ed25519.GenerateKey(nil)
-	r := newRecord(key, "node", []string{"203.0.113.1:443"})
-	if !r.valid(time.Minute) {
+	ctx := context.Background()
+	pub, key, _ := ed25519.GenerateKey(nil)
+	sign := func(_ context.Context, purpose string, data []byte) ([]byte, error) {
+		return module.Sign(key, purpose, data)
+	}
+	r, err := newRecord(ctx, sign, pub, "node", []string{"203.0.113.1:443"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.verified(time.Minute); !ok {
 		t.Fatal("fresh record is invalid")
 	}
 	forged := r
-	forged.Addrs = []string{"203.0.113.66:443"}
-	if forged.valid(time.Minute) {
+	forged.Data = bytes.Replace(r.Data, []byte("203.0.113.1"), []byte("203.0.113.6"), 1)
+	if _, ok := forged.verified(time.Minute); ok {
 		t.Fatal("altered record is valid")
 	}
-	old := r
-	old.Time = time.Now().Add(-time.Hour).UnixNano()
-	old.Sig = ed25519.Sign(key, old.signedBytes())
-	if old.valid(time.Minute) {
+	old := Record{d: recordData{PublicKey: pub, Addrs: []string{"203.0.113.1:443"}, Time: time.Now().Add(-time.Hour).UnixMilli()}}
+	old.Data, _ = json.Marshal(old.d)
+	old.Sig, _ = sign(ctx, recordPurpose, old.Data)
+	if _, ok := old.verified(time.Minute); ok {
 		t.Fatal("expired record is valid")
 	}
 }
 
-// memNet routes DHT messages between nodes in memory, by address, refusing
-// to reach a node other than the one expected, as TLS does.
+// memNet routes DHT calls between nodes in memory, by address, refusing to
+// reach a node other than the one expected, as TLS does.
 type memNet map[string]*DHT
 
-func (m memNet) sender(from ID) module.SendFunc {
-	return func(ctx context.Context, to api.Peer, name string, req, resp any) error {
+func (m memNet) caller(from ID) func(ctx context.Context, to module.Peer, name string, in, out any) error {
+	return func(ctx context.Context, to module.Peer, name string, in, out any) error {
 		for _, addr := range to.Addrs {
 			d := m[addr]
 			if d == nil || (to.ID != "" && to.ID != d.id.String()) {
 				continue
 			}
-			body, _ := json.Marshal(req)
-			out, err := d.Handlers()[name](module.WithSender(ctx, from.String()), func(v any) error {
+			body, _ := json.Marshal(in)
+			result, err := d.Handlers()[name](module.WithCaller(ctx, from.String()), func(v any) error {
 				return json.Unmarshal(body, v)
 			})
 			if err != nil {
 				return err
 			}
-			b, _ := json.Marshal(out)
-			return json.Unmarshal(b, resp)
+			b, _ := json.Marshal(result)
+			return json.Unmarshal(b, out)
 		}
 		return errors.New("unreachable")
 	}
@@ -101,8 +108,12 @@ func (m memNet) sender(from ID) module.SendFunc {
 func (m memNet) add(addr string, server bool, provides ...string) *DHT {
 	seed := sha256.Sum256([]byte(addr))
 	key := ed25519.NewKeyFromSeed(seed[:])
+	pub := key.Public().(ed25519.PublicKey)
 	d := New(Config{
-		Key:   key,
+		PublicKey: pub,
+		Sign: func(_ context.Context, purpose string, data []byte) ([]byte, error) {
+			return module.Sign(key, purpose, data)
+		},
 		Name:  addr,
 		Addrs: func() []string { return []string{addr} },
 		DirectAddrs: func() []string {
@@ -111,7 +122,7 @@ func (m memNet) add(addr string, server bool, provides ...string) *DHT {
 			}
 			return nil
 		},
-		Send:      m.sender(keyID(key.Public().(ed25519.PublicKey))),
+		Call:      m.caller(keyID(pub)),
 		Bootstrap: func(context.Context) []string { return []string{"node-0"} },
 		Refresh:   time.Minute,
 		Republish: time.Minute,

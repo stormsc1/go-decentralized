@@ -9,17 +9,20 @@ import (
 	"slices"
 	"time"
 
-	"go-decentralized/internal/api"
-	"go-decentralized/internal/module"
+	"go-decentralized/module"
 )
 
-// alpha is the number of messages a lookup keeps in flight at once.
+// alpha is the number of calls a lookup keeps in flight at once.
 const alpha = 3
 
+// SignFunc signs data for purpose with this node's key, see module.Env.
+type SignFunc func(ctx context.Context, purpose string, data []byte) ([]byte, error)
+
 type Config struct {
-	// Key is this node's key: its ID is derived from it, and it signs the
-	// node's record.
-	Key  ed25519.PrivateKey
+	// PublicKey is this node's key: its ID is derived from it.
+	PublicKey ed25519.PublicKey
+	// Sign signs the node's record.
+	Sign SignFunc
 	Name string
 	// Addrs returns every address this node can be reached at, including
 	// indirect ones such as relays. They are published in its record.
@@ -28,8 +31,8 @@ type Config struct {
 	// Without any, the node runs in client mode: it isn't added to routing
 	// tables, but can still be found through its record.
 	DirectAddrs func() []string
-	// Send carries the DHT's messages, named as in Handlers.
-	Send module.SendFunc
+	// Call calls a DHT capability, named as in Handlers, on another node.
+	Call func(ctx context.Context, to module.Peer, name string, in, out any) error
 	// Bootstrap returns addresses (host:port) of nodes to join the network
 	// through. It is called whenever the routing table is empty.
 	Bootstrap func(ctx context.Context) []string
@@ -50,7 +53,7 @@ type DHT struct {
 }
 
 func New(cfg Config) *DHT {
-	id := keyID(cfg.Key.Public().(ed25519.PublicKey))
+	id := keyID(cfg.PublicKey)
 	return &DHT{
 		cfg:       cfg,
 		id:        id,
@@ -59,14 +62,14 @@ func New(cfg Config) *DHT {
 	}
 }
 
-// self is the contact this node sends with every message.
+// self is the contact this node sends with every call.
 func (d *DHT) self() Contact {
 	return Contact{ID: d.id, Addrs: d.cfg.DirectAddrs(), Name: d.cfg.Name}
 }
 
-// record is this node's current record.
-func (d *DHT) record() Record {
-	return newRecord(d.cfg.Key, d.cfg.Name, d.cfg.Addrs())
+// selfRecord is this node as its record describes it.
+func (d *DHT) selfRecord() Contact {
+	return Contact{ID: d.id, Addrs: d.cfg.Addrs(), Name: d.cfg.Name}
 }
 
 // Run keeps the node joined to the network until ctx is done. It refreshes
@@ -114,8 +117,8 @@ func (d *DHT) Nodes(ctx context.Context) ([]Contact, error) {
 	for _, r := range d.providers.nodeRecords() {
 		known[r.ID()] = r.Contact()
 	}
-	if self := d.record(); len(self.Addrs) > 0 {
-		known[d.id] = self.Contact()
+	if self := d.selfRecord(); len(self.Addrs) > 0 {
+		known[d.id] = self
 	}
 	nodes := slices.Collect(maps.Values(known))
 	sortByDistance(nodes, d.id)
@@ -125,14 +128,14 @@ func (d *DHT) Nodes(ctx context.Context) ([]Contact, error) {
 // FindNode locates the node with the given ID.
 func (d *DHT) FindNode(ctx context.Context, id ID) (Contact, bool, error) {
 	if id == d.id {
-		return d.record().Contact(), true, nil
+		return d.selfRecord(), true, nil
 	}
 	if err := d.ensureJoined(ctx); err != nil {
 		return Contact{}, false, err
 	}
 	// Nodes announce their record under their own ID, which finds nodes
 	// outside routing tables too.
-	closest, records := d.lookup(ctx, id, msgFindProviders)
+	closest, records := d.lookup(ctx, id, capFindProviders)
 	if r, ok := records[id]; ok {
 		return r.Contact(), true, nil
 	}
@@ -148,7 +151,7 @@ func (d *DHT) FindProviders(ctx context.Context, key string) ([]Contact, error) 
 		return nil, err
 	}
 	k := HashKey(key)
-	_, records := d.lookup(ctx, k, msgFindProviders)
+	_, records := d.lookup(ctx, k, capFindProviders)
 	for _, r := range d.providers.get(k) {
 		keepNewest(records, r)
 	}
@@ -171,7 +174,7 @@ func (d *DHT) ensureJoined(ctx context.Context) error {
 func (d *DHT) refresh(ctx context.Context) error {
 	if d.table.Len() == 0 {
 		for _, addr := range d.cfg.Bootstrap(ctx) {
-			if _, err := d.call(ctx, api.Peer{Addrs: []string{addr}}, msgFindNode, request{Target: d.id}); err != nil {
+			if _, err := d.call(ctx, module.Peer{Addrs: []string{addr}}, capFindNode, request{Target: d.id}); err != nil {
 				slog.Debug("discovery: bootstrap failed", "addr", addr, "err", err)
 			}
 		}
@@ -179,16 +182,21 @@ func (d *DHT) refresh(ctx context.Context) error {
 			return errors.New("no bootstrap node reachable")
 		}
 	}
-	d.lookup(ctx, d.id, msgFindNode)
+	d.lookup(ctx, d.id, capFindNode)
 	return nil
 }
 
 // announce stores this node's record on the K nodes closest to its own ID,
 // so it can be found by ID, and to each key it provides.
 func (d *DHT) announce(ctx context.Context) {
-	rec := d.record()
-	if len(rec.Addrs) == 0 {
+	addrs := d.cfg.Addrs()
+	if len(addrs) == 0 {
 		return // unreachable: nothing to announce
+	}
+	rec, err := newRecord(ctx, d.cfg.Sign, d.cfg.PublicKey, d.cfg.Name, addrs)
+	if err != nil {
+		slog.Warn("discovery: can't sign record", "err", err)
+		return
 	}
 	keys := []ID{d.id}
 	for _, key := range d.cfg.Provides() {
@@ -196,9 +204,9 @@ func (d *DHT) announce(ctx context.Context) {
 	}
 	for _, k := range keys {
 		d.providers.add(k, rec)
-		closest, _ := d.lookup(ctx, k, msgFindNode)
+		closest, _ := d.lookup(ctx, k, capFindNode)
 		for _, c := range closest {
-			if _, err := d.call(ctx, peerOf(c), msgAddProvider, request{Target: k, Record: &rec}); err != nil {
+			if _, err := d.call(ctx, peerOf(c), capAddProvider, request{Target: k, Record: &rec}); err != nil {
 				d.table.Remove(c.ID)
 			}
 		}
@@ -208,8 +216,8 @@ func (d *DHT) announce(ctx context.Context) {
 // lookup is Kademlia's iterative search: it keeps querying the alpha closest
 // contacts not yet asked, merging what they return, until the K closest
 // known contacts have all answered. It returns those contacts and, for
-// find_providers, the valid provider records seen along the way.
-func (d *DHT) lookup(ctx context.Context, target ID, msg string) ([]Contact, map[ID]Record) {
+// dht_find_providers, the valid provider records seen along the way.
+func (d *DHT) lookup(ctx context.Context, target ID, capability string) ([]Contact, map[ID]Record) {
 	shortlist := d.table.Closest(target, K)
 	seen := map[ID]bool{d.id: true}
 	for _, c := range shortlist {
@@ -238,7 +246,7 @@ func (d *DHT) lookup(ctx context.Context, target ID, msg string) ([]Contact, map
 		for _, c := range batch {
 			asked[c.ID] = true
 			go func() {
-				resp, err := d.call(ctx, peerOf(c), msg, request{Target: target})
+				resp, err := d.call(ctx, peerOf(c), capability, request{Target: target})
 				results <- result{c, resp, err}
 			}()
 		}
@@ -250,7 +258,7 @@ func (d *DHT) lookup(ctx context.Context, target ID, msg string) ([]Contact, map
 				continue
 			}
 			for _, r := range res.resp.Providers {
-				if r.valid(d.providers.ttl) {
+				if r, ok := r.verified(d.providers.ttl); ok {
 					keepNewest(records, r)
 				}
 			}

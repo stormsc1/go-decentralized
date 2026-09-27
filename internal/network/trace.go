@@ -4,25 +4,31 @@ import (
 	"context"
 	"time"
 
-	"go-decentralized/internal/api"
+	"go-decentralized/module"
 )
 
 // maxTraces bounds how many traces a node keeps.
 const maxTraces = 1000
 
-type noTraceKey struct{}
-
-// WithoutTrace marks ctx so that what's sent with it isn't traced, e.g. the
-// debugging tools' own traffic.
-func WithoutTrace(ctx context.Context) context.Context {
-	return context.WithValue(ctx, noTraceKey{}, true)
+// Trace records a call or stream a node made, for debugging.
+type Trace struct {
+	Time time.Time `json:"time"`
+	Kind string    `json:"kind"` // "call" or "stream"
+	// Ref is the capability called, or the stream opened.
+	Ref  string `json:"ref"`
+	From string `json:"from"`
+	// To is the ID of the node that answered, as proven over TLS.
+	To       string        `json:"to,omitempty"`
+	Addr     string        `json:"addr"`
+	Duration time.Duration `json:"duration"`
+	Error    string        `json:"error,omitempty"`
 }
 
 // Traces returns what this node sent after since, oldest first.
-func (n *Network) Traces(since time.Time) []api.Trace {
+func (n *Network) Traces(since time.Time) []Trace {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	var out []api.Trace
+	var out []Trace
 	for _, t := range n.traces {
 		if t.Time.After(since) {
 			out = append(out, t)
@@ -31,12 +37,12 @@ func (n *Network) Traces(since time.Time) []api.Trace {
 	return out
 }
 
-// trace records a message or stream this node sent.
-func (n *Network) trace(ctx context.Context, kind, name, addr, to string, start time.Time, err error) {
-	if ctx.Value(noTraceKey{}) != nil {
+// trace records a call or stream this node made.
+func (n *Network) trace(ctx context.Context, kind, ref, addr, to string, start time.Time, err error) {
+	if module.IsUntraced(ctx) {
 		return
 	}
-	t := api.Trace{Time: time.Now(), Kind: kind, Name: name, From: n.id, To: to, Addr: addr, Duration: time.Since(start)}
+	t := Trace{Time: time.Now(), Kind: kind, Ref: ref, From: n.id, To: to, Addr: addr, Duration: time.Since(start)}
 	if err != nil {
 		t.Error = err.Error()
 	}

@@ -11,7 +11,7 @@ import (
 	"math/big"
 	"time"
 
-	"go-decentralized/internal/identity"
+	"go-decentralized/module"
 )
 
 // Nodes authenticate each other with TLS, trusting keys rather than
@@ -22,7 +22,7 @@ import (
 func certificate(key ed25519.PrivateKey) (tls.Certificate, error) {
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: identity.NodeID(key)},
+		Subject:      pkix.Name{CommonName: module.NodeID(key.Public().(ed25519.PublicKey))},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().AddDate(100, 0, 0),
 	}
@@ -69,7 +69,7 @@ func certNode(cert *x509.Certificate) string {
 	if !ok {
 		return ""
 	}
-	return identity.IDOf(pub)
+	return module.NodeID(pub)
 }
 
 // peerNode returns the ID of the node at the other end of a TLS connection.

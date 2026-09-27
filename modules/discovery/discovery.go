@@ -4,18 +4,20 @@ package discovery
 
 import (
 	"context"
+	_ "embed"
 	"log/slog"
 	"slices"
 	"sync"
 	"time"
 
-	"go-decentralized/internal/api"
-	"go-decentralized/internal/module"
-	"go-decentralized/modules/discovery/capabilities"
+	"go-decentralized/module"
 	"go-decentralized/modules/discovery/kademlia"
 )
 
 const Name = "discovery"
+
+//go:embed module.yaml
+var manifest []byte
 
 // Config is the `config:` block of the discovery module in a node definition.
 type Config struct {
@@ -32,11 +34,10 @@ type Config struct {
 }
 
 type Module struct {
-	cfg  Config
-	id   kademlia.ID
-	name string
-	net  module.NetworkInfo
-	dht  *kademlia.DHT
+	cfg Config
+	env module.Env
+	id  kademlia.ID
+	dht *kademlia.DHT
 
 	mu  sync.Mutex
 	lan map[kademlia.ID]kademlia.Contact // peers on the local network, see browseLAN
@@ -52,35 +53,72 @@ func New(decode func(any) error, env module.Env) (module.Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Module{cfg: cfg, id: id, name: env.NodeName, net: env.Network}
+	m := &Module{cfg: cfg, env: env, id: id}
 	m.dht = kademlia.New(kademlia.Config{
-		Key:         env.Key,
+		PublicKey:   m.info().PublicKey,
+		Sign:        env.Sign,
 		Name:        env.NodeName,
-		Addrs:       env.Network.Addrs,
-		DirectAddrs: env.Network.DirectAddrs,
-		Send: func(ctx context.Context, to api.Peer, name string, req, resp any) error {
-			return env.Send(ctx, to, Name+"."+name, req, resp)
+		Addrs:       func() []string { return m.info().Addrs },
+		DirectAddrs: func() []string { return m.info().DirectAddrs },
+		Call: func(ctx context.Context, to module.Peer, name string, in, out any) error {
+			return env.CallNode(ctx, to, Name+"."+name, in, out)
 		},
 		Bootstrap: m.bootstrap,
 		Refresh:   cfg.Refresh,
 		Republish: cfg.Republish,
-		Provides:  env.Registry.Refs,
+		Provides:  m.provides,
 	})
 	return m, nil
 }
 
-func (m *Module) Name() string { return Name }
+func (m *Module) Manifest() module.Manifest { return module.MustParseManifest(manifest) }
 
-func (m *Module) Capabilities() []module.Capability {
-	return []module.Capability{
-		&capabilities.ListNodes{DHT: m.dht},
-		&capabilities.FindNodeByID{Find: m.findNode},
-		&capabilities.FindCapabilityProviders{DHT: m.dht},
-	}
+func (m *Module) Handlers() map[string]module.Handler {
+	hs := m.dht.Handlers()
+	hs["list_nodes"] = module.HandlerFor(m.listNodes)
+	hs["find_node_by_id"] = module.HandlerFor(m.findNodeByID)
+	hs["find_capability_providers"] = module.HandlerFor(m.findProviders)
+	return hs
 }
 
-// Messages are the DHT's messages between nodes.
-func (m *Module) Messages() map[string]module.Handler { return m.dht.Handlers() }
+type nodes struct {
+	Nodes []kademlia.Contact `json:"nodes"`
+}
+
+func (m *Module) listNodes(ctx context.Context, _ struct{}) (nodes, error) {
+	found, err := m.dht.Nodes(ctx)
+	if err != nil {
+		return nodes{}, module.Errorf(module.CodeUnavailable, "%v", err)
+	}
+	return nodes{Nodes: found}, nil
+}
+
+func (m *Module) findNodeByID(ctx context.Context, in struct {
+	ID kademlia.ID `json:"id"`
+}) (kademlia.Contact, error) {
+	found, ok, err := m.findNode(ctx, in.ID)
+	if err != nil {
+		return found, module.Errorf(module.CodeUnavailable, "%v", err)
+	}
+	if !ok {
+		return found, module.Errorf(module.CodeNotFound, "node %s not found", in.ID)
+	}
+	return found, nil
+}
+
+type providers struct {
+	Providers []kademlia.Contact `json:"providers"`
+}
+
+func (m *Module) findProviders(ctx context.Context, in struct {
+	Capability string `json:"capability"`
+}) (providers, error) {
+	found, err := m.dht.FindProviders(ctx, in.Capability)
+	if err != nil {
+		return providers{}, module.Errorf(module.CodeUnavailable, "%v", err)
+	}
+	return providers{Providers: found}, nil
+}
 
 // Inspect reports the routing table and LAN peers, for the debug module.
 func (m *Module) Inspect() any {
@@ -91,8 +129,8 @@ func (m *Module) Inspect() any {
 }
 
 func (m *Module) Run(ctx context.Context) {
-	if port := m.net.ListenPort(); m.cfg.MDNS && port != 0 {
-		stop, err := advertise(kademlia.Contact{ID: m.id, Name: m.name}, port)
+	if port := m.info().ListenPort; m.cfg.MDNS && port != 0 {
+		stop, err := advertise(kademlia.Contact{ID: m.id, Name: m.env.NodeName}, port)
 		if err != nil {
 			slog.Warn("discovery: mdns advertise failed", "err", err)
 		} else {
@@ -107,31 +145,42 @@ func (m *Module) Run(ctx context.Context) {
 	wg.Wait()
 }
 
-// bootstrap returns the configured bootstrap nodes plus any found via mDNS.
+// info describes this node: its key, addresses and modules. It's empty if
+// the node doesn't answer.
+func (m *Module) info() module.NodeInfo {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var info module.NodeInfo
+	if err := m.env.Call(ctx, "node.info", nil, &info); err != nil {
+		slog.Warn("discovery: node.info failed", "err", err)
+	}
+	return info
+}
+
+// provides returns the capabilities this node announces: those other nodes
+// may call, except the ones internal to a protocol.
+func (m *Module) provides() []string {
+	var refs []string
+	for _, mod := range m.info().Modules {
+		for _, c := range mod.Capabilities {
+			if c.Access == module.Network && !c.Internal {
+				refs = append(refs, c.Ref)
+			}
+		}
+	}
+	return refs
+}
+
+// bootstrap returns the configured bootstrap nodes plus any found via mDNS,
+// other than this one.
 func (m *Module) bootstrap(ctx context.Context) []string {
 	addrs := slices.Clone(m.cfg.Bootstrap)
 	if m.cfg.MDNS {
 		for _, c := range m.browseLAN(ctx) {
-			addrs = append(addrs, c.Addrs...)
+			if c.ID != m.id {
+				addrs = append(addrs, c.Addrs...)
+			}
 		}
 	}
 	return addrs
-}
-
-// Peers returns nodes for the node to check its reachability with: routing
-// table contacts, which are servers outside any NAT and so see this node's
-// public address. Until the table fills, e.g. because no node is known to be
-// reachable yet, it falls back to the bootstrap nodes.
-func (m *Module) Peers(ctx context.Context) []api.Peer {
-	var peers []api.Peer
-	for _, c := range m.dht.Known() {
-		peers = append(peers, api.Peer{ID: c.ID.String(), Addrs: c.Addrs})
-	}
-	if len(peers) > 0 {
-		return peers
-	}
-	for _, addr := range m.bootstrap(ctx) {
-		peers = append(peers, api.Peer{Addrs: []string{addr}})
-	}
-	return peers
 }

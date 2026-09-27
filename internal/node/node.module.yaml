@@ -1,0 +1,84 @@
+# yaml-language-server: $schema=../../spec/module.schema.json
+name: node
+version: 1.0.0
+description: What a node tells its own modules and tools about itself. Built into nodes.
+capabilities:
+  - name: info
+    description: Describes this node, its addresses and its modules.
+    output: {$ref: "#/$defs/info"}
+  - name: sign
+    description: Signs data with the node's key, for a purpose starting with the calling module's name.
+    internal: true
+    input:
+      type: object
+      required: [purpose, data]
+      properties:
+        purpose: {type: string, minLength: 1}
+        data: {type: string, contentEncoding: base64}
+    output:
+      type: object
+      properties:
+        signature: {type: string, contentEncoding: base64}
+  - name: traces
+    description: Lists the calls this node made after since, oldest first.
+    internal: true
+    input:
+      type: object
+      properties:
+        since: {type: string, format: date-time}
+    output:
+      type: object
+      properties:
+        traces: {type: array, items: {$ref: "#/$defs/trace"}}
+  - name: inspect
+    description: Reports on the state of this node's network and modules, for debugging.
+    internal: true
+    output:
+      type: object
+      properties:
+        network: {type: object}
+        modules: {type: object, additionalProperties: {type: object}}
+$defs:
+  info:
+    type: object
+    required: [id, name, public_key, modules]
+    properties:
+      id: {type: string, description: "The node's ID: the SHA-256 of its public key, in hex."}
+      name: {type: string}
+      description: {type: string}
+      public_key: {type: string, contentEncoding: base64, description: "The node's Ed25519 public key."}
+      addrs: {type: array, items: {type: string}, description: Addresses the node can be reached at, direct ones first.}
+      direct_addrs: {type: array, items: {type: string}, description: Addresses other nodes can connect to directly. None in client mode.}
+      observed: {type: array, items: {type: string}, description: Public IPs other nodes see the node at.}
+      listen_port: {type: integer}
+      modules:
+        type: array
+        items:
+          type: object
+          required: [name, runtime]
+          properties:
+            name: {type: string}
+            version: {type: string}
+            description: {type: string}
+            runtime: {enum: [builtin, native, process]}
+            capabilities:
+              type: array
+              items:
+                type: object
+                required: [ref, access]
+                properties:
+                  ref: {type: string}
+                  description: {type: string}
+                  access: {enum: [local, network]}
+                  internal: {type: boolean}
+  trace:
+    type: object
+    properties:
+      time: {type: string, format: date-time}
+      kind: {enum: [call, stream]}
+      ref: {type: string}
+      from: {type: string, description: ID of the calling node.}
+      to: {type: string, description: ID of the node that answered, as it proved over TLS.}
+      addr: {type: string}
+      duration: {type: integer, description: Nanoseconds.}
+      error: {type: string}

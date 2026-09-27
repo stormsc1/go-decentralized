@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=../../spec/module.schema.json
+name: network
+version: 1.0.0
+description: What every node answers about its reachability. Built into nodes.
+capabilities:
+  - name: ping
+    description: Answers. Reaching a node proves it's reachable at the address used.
+    access: network
+    internal: true
+  - name: dial_back
+    description: Tells the caller the address it is seen at, and whether it answers a ping there.
+    access: network
+    internal: true
+    input:
+      type: object
+      required: [port]
+      properties:
+        port: {type: integer, minimum: 1, maximum: 65535, description: The port the caller accepts connections on.}
+    output:
+      type: object
+      properties:
+        addr: {type: string, description: "The caller's IP as the node sees it, with the port."}
+        reachable: {type: boolean, description: Whether the caller answered a ping there.}

@@ -14,3 +14,5 @@ modules:
         - ${DISCOVERY_BOOTSTRAP}
   # Lets tools such as the network explorer (web/) inspect this node.
   - name: debug
+  # An example module, here compiled into the node.
+  - name: greeter

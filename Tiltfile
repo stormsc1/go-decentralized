@@ -8,7 +8,7 @@
 docker_build(
     'go-decentralized/node:dev',
     '.',
-    only=['go.mod', 'go.sum', 'cmd', 'internal', 'modules'],
+    only=['go.mod', 'go.sum', 'cmd', 'internal', 'module', 'modules'],
 )
 docker_compose('compose.yaml')
 

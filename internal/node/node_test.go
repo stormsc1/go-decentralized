@@ -2,54 +2,131 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"net"
+	"os"
 	"testing"
 	"time"
 
-	"go-decentralized/internal/api"
 	"go-decentralized/internal/identity"
-	"go-decentralized/internal/module"
 	"go-decentralized/internal/network"
+	"go-decentralized/module"
 )
 
-// echo is a module that answers echo.hello with who sent the message.
-type echo struct{}
+// echo is a test module: it tells callers who they are, adds numbers, and
+// asks its node for its name.
+type echo struct{ env module.Env }
 
-func (echo) Name() string                      { return "echo" }
-func (echo) Capabilities() []module.Capability { return nil }
-func (echo) Messages() map[string]module.Handler {
+var echoManifest = module.MustParseManifest([]byte(`
+name: echo
+version: 1.0.0
+capabilities:
+  - name: whoami
+    access: network
+    output: {type: object, properties: {caller: {type: string}}}
+  - name: add
+    input:
+      type: object
+      required: [a, b]
+      properties: {a: {type: integer}, b: {type: integer}}
+    output: {type: object, properties: {sum: {type: integer}}}
+  - name: node_name
+    output: {type: object, properties: {name: {type: string}}}
+`))
+
+func newEcho(_ func(any) error, env module.Env) (module.Module, error) { return echo{env}, nil }
+
+func (echo) Manifest() module.Manifest { return echoManifest }
+
+func (e echo) Handlers() map[string]module.Handler {
 	return map[string]module.Handler{
-		"hello": module.HandlerFor(func(ctx context.Context, _ struct{}) (string, error) {
-			return module.Sender(ctx), nil
+		"whoami": module.HandlerFor(func(ctx context.Context, _ struct{}) (map[string]string, error) {
+			return map[string]string{"caller": module.Caller(ctx)}, nil
+		}),
+		"add": module.HandlerFor(func(_ context.Context, in struct{ A, B int }) (map[string]int, error) {
+			return map[string]int{"sum": in.A + in.B}, nil
+		}),
+		"node_name": module.HandlerFor(func(ctx context.Context, _ struct{}) (map[string]string, error) {
+			var info module.NodeInfo
+			err := e.env.Call(ctx, "node.info", nil, &info)
+			return map[string]string{"name": info.Name}, err
 		}),
 	}
 }
 
-func TestModulesReceiveTheirMessages(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	a, _ := start(ctx, t)
-	b, bAddr := start(ctx, t)
-
-	var sender string
-	var err error
-	for range 50 { // until b listens
-		err = a.Env.Send(ctx, api.Peer{ID: b.Env.NodeID, Addrs: []string{bAddr}}, "echo.hello", struct{}{}, &sender)
-		if err == nil {
-			break
+// TestMain lets the test binary run echo as a process module, for nodes that
+// start it.
+func TestMain(m *testing.M) {
+	if os.Getenv(module.ProtocolEnv) != "" {
+		if err := module.Serve(newEcho); err != nil {
+			os.Exit(1)
 		}
-		time.Sleep(20 * time.Millisecond)
+		os.Exit(0)
 	}
-	if err != nil {
-		t.Fatal(err)
+	os.Exit(m.Run())
+}
+
+func TestNativeModule(t *testing.T) {
+	ctx := context.Background()
+	caller, _ := start(t, ModuleConfig{Name: "echo"})
+	callee, calleeAddr := start(t, ModuleConfig{Name: "echo"})
+	testModule(t, ctx, caller, callee, calleeAddr)
+}
+
+func TestProcessModule(t *testing.T) {
+	ctx := context.Background()
+	caller, _ := start(t, ModuleConfig{Name: "echo"})
+	callee, calleeAddr := start(t, ModuleConfig{Name: "echo", Run: []string{os.Args[0]}})
+	if info := callee.Info(); info.Modules[len(info.Modules)-1].Runtime != "process" {
+		t.Fatalf("echo runs as %q", info.Modules[len(info.Modules)-1].Runtime)
 	}
-	if sender != a.Env.NodeID {
-		t.Fatalf("echo saw the message come from %.8s, want %.8s", sender, a.Env.NodeID)
+	testModule(t, ctx, caller, callee, calleeAddr)
+}
+
+// testModule checks that calls reach callee's echo module: from caller over
+// the network, and from callee itself.
+func testModule(t *testing.T, ctx context.Context, caller, callee *Node, calleeAddr string) {
+	t.Helper()
+	peer := module.Peer{ID: callee.ID, Addrs: []string{calleeAddr}}
+	var out struct {
+		Caller string
+		Sum    int
+		Name   string
+	}
+	call := func(result json.RawMessage, err error) error {
+		out.Caller, out.Sum, out.Name = "", 0, ""
+		if err == nil {
+			err = json.Unmarshal(result, &out)
+		}
+		return err
+	}
+
+	if err := call(caller.Network.Call(ctx, peer, "echo.whoami", nil)); err != nil || out.Caller != caller.ID {
+		t.Fatalf("remote whoami = %q, %v; want the caller %.8s", out.Caller, err, caller.ID)
+	}
+	if err := call(callee.Call(ctx, "echo.whoami", nil)); err != nil || out.Caller != callee.ID {
+		t.Fatalf("local whoami = %q, %v; want the node itself %.8s", out.Caller, err, callee.ID)
+	}
+	if err := call(caller.Network.Call(ctx, peer, "echo.add", json.RawMessage(`{"a":1,"b":2}`))); module.Code(err) != module.CodePermissionDenied {
+		t.Fatalf("remote call to a local capability: err = %v", err)
+	}
+	if err := call(callee.Call(ctx, "echo.add", json.RawMessage(`{"a":"1"}`))); module.Code(err) != module.CodeInvalidArgument {
+		t.Fatalf("call with an input its schema rejects: err = %v", err)
+	}
+	if err := call(callee.Call(ctx, "echo.add", json.RawMessage(`{"a":1,"b":2}`))); err != nil || out.Sum != 3 {
+		t.Fatalf("add = %d, %v", out.Sum, err)
+	}
+	if err := call(callee.Call(ctx, "echo.node_name", nil)); err != nil || out.Name != "test" {
+		t.Fatalf("node_name = %q, %v", out.Name, err)
+	}
+	if err := call(callee.Call(ctx, "echo.missing", nil)); module.Code(err) != module.CodeUnimplemented {
+		t.Fatalf("call to a missing capability: err = %v", err)
 	}
 }
 
-// start runs a node with the echo module, listening on localhost.
-func start(ctx context.Context, t *testing.T) (*Node, string) {
+// start runs a node with one module, listening on localhost, until the test
+// ends.
+func start(t *testing.T, mc ModuleConfig) (*Node, string) {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -59,16 +136,31 @@ func start(ctx context.Context, t *testing.T) (*Node, string) {
 	l.Close()
 
 	key, _ := identity.Load("")
-	nw, err := network.New(network.Config{Key: key})
+	nw, err := network.New(network.Config{Key: key, ListenPort: l.Addr().(*net.TCPAddr).Port, Private: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	newEcho := func(func(any) error, module.Env) (module.Module, error) { return echo{}, nil }
-	n, err := New(Config{Name: "test", Modules: []ModuleConfig{{Name: "echo"}}}, key, nw,
-		map[string]module.Factory{"echo": newEcho})
+	n, err := New(Config{Name: "test", Modules: []ModuleConfig{mc}}, key, nw, map[string]module.Factory{"echo": newEcho})
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		n.Run(ctx)
+		close(done)
+	}()
 	go nw.ListenAndServe(ctx, addr)
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	for range 50 { // until it listens
+		if c, err := net.DialTimeout("tcp", addr, 100*time.Millisecond); err == nil {
+			c.Close()
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	return n, addr
 }

@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Module manifest (module.yaml)",
+  "description": "What a module declares: its name, version and capabilities. See spec/modules.md.",
+  "type": "object",
+  "required": ["name", "version"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Identifies the module in a node and prefixes its capabilities. node, network and module are reserved."
+    },
+    "version": {
+      "type": "string",
+      "description": "The module's semantic version."
+    },
+    "description": {
+      "type": "string"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/capability" }
+    },
+    "$defs": {
+      "type": "object",
+      "description": "Schemas the capabilities' schemas refer to, as #/$defs/<name>.",
+      "additionalProperties": { "type": ["object", "boolean"] }
+    }
+  },
+  "$defs": {
+    "capability": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Unique in the module. Called as <module>.<name>."
+        },
+        "description": {
+          "type": "string",
+          "description": "One line, for users."
+        },
+        "access": {
+          "enum": ["local", "network"],
+          "default": "local",
+          "description": "local: only the node itself, its modules and tools. network: other nodes too."
+        },
+        "internal": {
+          "type": "boolean",
+          "default": false,
+          "description": "Part of a protocol between modules: not announced to other nodes, nor listed by tools."
+        },
+        "input": {
+          "$ref": "#/$defs/schema",
+          "description": "JSON Schema of the call's input. Unset means any object."
+        },
+        "output": {
+          "$ref": "#/$defs/schema",
+          "description": "JSON Schema of the call's result. Unset means any object."
+        }
+      }
+    },
+    "schema": {
+      "description": "A JSON Schema (2020-12) of an object.",
+      "type": "object",
+      "anyOf": [
+        { "required": ["$ref"] },
+        { "required": ["type"], "properties": { "type": { "const": "object" } } }
+      ]
+    }
+  }
+}

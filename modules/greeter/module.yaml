@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=../../spec/module.schema.json
+name: greeter
+version: 1.0.0
+description: Says hello across the network. An example module, which runs compiled into a node or in a process of its own.
+capabilities:
+  - name: hello
+    description: Greets the caller.
+    access: network
+    input:
+      type: object
+      properties:
+        name: {type: string, description: Who to greet.}
+    output: {$ref: "#/$defs/greeting"}
+  - name: greet
+    description: Asks the node with the given ID to greet this one.
+    input:
+      type: object
+      required: [id]
+      properties:
+        id: {type: string, description: The node ID, in hex.}
+        name: {type: string, description: Who to be greeted as.}
+    output: {$ref: "#/$defs/greeting"}
+$defs:
+  greeting:
+    type: object
+    required: [greeting]
+    properties:
+      greeting: {type: string}

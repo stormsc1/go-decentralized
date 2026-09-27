@@ -1,0 +1,76 @@
+# yaml-language-server: $schema=../../spec/module.schema.json
+name: debug
+version: 1.0.0
+description: Reports on nodes, for debugging tools such as the network explorer.
+capabilities:
+  - name: report
+    description: Reports this node's addresses, modules and their state.
+    access: network
+    output: {$ref: "#/$defs/report"}
+  - name: traces
+    description: Lists the calls this node made after since, oldest first.
+    access: network
+    internal: true
+    input: {$ref: "#/$defs/since"}
+    output: {$ref: "#/$defs/traces"}
+  - name: map_network
+    description: Reports on every node running the debug module, found by capability. Calls each.
+    output:
+      type: object
+      properties:
+        nodes: {type: array, items: {$ref: "#/$defs/report"}}
+  - name: traffic
+    description: Lists the calls nodes running the debug module made, oldest first.
+    input: {$ref: "#/$defs/since"}
+    output: {$ref: "#/$defs/traces"}
+  - name: ping_node
+    description: Pings the node with the given ID, over this node's session with it, or a new one, through a relay if needed.
+    input:
+      type: object
+      required: [id]
+      properties:
+        id: {type: string, description: The node ID, in hex.}
+    output:
+      type: object
+      properties:
+        rtt: {type: string, description: "The round-trip time, e.g. 1.2ms."}
+$defs:
+  since:
+    type: object
+    properties:
+      since: {type: string, format: date-time, description: Only list calls after this time.}
+  traces:
+    type: object
+    properties:
+      traces:
+        type: array
+        items:
+          type: object
+          properties:
+            time: {type: string, format: date-time}
+            kind: {enum: [call, stream]}
+            ref: {type: string, description: The capability called, or the stream opened.}
+            from: {type: string, description: ID of the calling node.}
+            to: {type: string, description: ID of the node that answered, as it proved over TLS.}
+            addr: {type: string}
+            duration: {type: integer, description: Nanoseconds.}
+            error: {type: string}
+  report:
+    type: object
+    required: [id]
+    properties:
+      id: {type: string}
+      name: {type: string}
+      addrs: {type: array, items: {type: string}}
+      direct: {type: boolean, description: "Whether the node accepts direct connections. Nodes that don't are in client mode, reachable through relays if at all."}
+      observed: {type: array, items: {type: string}, description: Public IPs other nodes see the node at. Nodes behind the same NAT share them.}
+      network: {type: object, description: "The state of the node's network, e.g. its relays."}
+      modules:
+        type: object
+        description: The node's modules, by name.
+        additionalProperties:
+          type: object
+          properties:
+            capabilities: {type: array, items: {type: string}}
+            state: {type: object, description: "The module's own report of its state, if it gives one."}
+      error: {type: string, description: Set by map_network for nodes it couldn't reach.}

@@ -4,6 +4,8 @@ import (
 	"crypto/ed25519"
 	"path/filepath"
 	"testing"
+
+	"go-decentralized/module"
 )
 
 func TestLoadKeepsKey(t *testing.T) {
@@ -32,7 +34,7 @@ func TestLoadWithoutPathIsEphemeral(t *testing.T) {
 func TestNodeID(t *testing.T) {
 	key, _ := Load("")
 	id := NodeID(key)
-	if len(id) != 64 || id != IDOf(key.Public().(ed25519.PublicKey)) {
+	if len(id) != 64 || id != module.NodeID(key.Public().(ed25519.PublicKey)) {
 		t.Fatalf("NodeID = %q", id)
 	}
 }

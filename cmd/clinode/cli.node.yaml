@@ -9,3 +9,5 @@ modules:
         - ${DISCOVERY_BOOTSTRAP}
   # Diagnostics: map_network, ping_node.
   - name: debug
+  # Try: greeter.greet id=<a node running greeter>
+  - name: greeter

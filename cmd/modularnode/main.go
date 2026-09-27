@@ -78,7 +78,7 @@ func main() {
 		go serveAPI(ctx, *apiAddr, n.Handler())
 	}
 
-	slog.Info("Node ready", "name", cfg.Name, "id", n.Env.NodeID, "listen", *listen, "api", *apiAddr)
+	slog.Info("Node ready", "name", cfg.Name, "id", n.ID, "listen", *listen, "api", *apiAddr)
 	if err := nw.ListenAndServe(ctx, *listen); err != nil {
 		fatal("listen", err)
 	}

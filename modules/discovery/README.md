@@ -4,6 +4,8 @@ Finds nodes without a central authority, using a [Kademlia](https://www.scs.stan
 
 Why Kademlia? Because it's highly fault-tolerant and lookups are only O(log n) of n nodes, making it efficient for large networks.
 
+Protocol, for other implementations: [spec/modules/discovery.md](../../spec/modules/discovery.md).
+
 ## First Contact
 
 New node needs one existing node to join. To get this first contact, it can use a bootstrap list of known nodes or rely on mDNS for local network discovery.

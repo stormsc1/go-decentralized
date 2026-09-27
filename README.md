@@ -4,9 +4,12 @@
 tilt up                               # network lab + explorer, with hot reload (or F5 in VS Code)
 docker compose run --build --rm cli   # CLI on the lab's home network
 > debug.map_network
+> greeter.greet id=<ID of gl or kg>
 ```
 
 Network explorer: http://localhost:5173 · Tilt: http://localhost:10350
+
+Nodes and modules follow a language-neutral contract: [spec/](spec/README.md). Modules can run compiled into a node, or in a process of their own in any language, e.g. [the TypeScript greeter](examples/greeter-ts/greeter.ts).
 
 Goals:
  - Provide a modular framework for building decentralized ecosystems.

@@ -4,12 +4,12 @@ package identity
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"go-decentralized/module"
 )
 
 // Load reads the node key stored at path, creating it, and its directory, if
@@ -39,13 +39,7 @@ func Load(path string) (ed25519.PrivateKey, error) {
 	return ed25519.NewKeyFromSeed(seed), nil
 }
 
-// NodeID derives a node's ID from its key: hex(sha256(public key)).
+// NodeID derives a node's ID from its key, see module.NodeID.
 func NodeID(key ed25519.PrivateKey) string {
-	return IDOf(key.Public().(ed25519.PublicKey))
-}
-
-// IDOf is the ID of the node with the given public key.
-func IDOf(pub ed25519.PublicKey) string {
-	sum := sha256.Sum256(pub)
-	return hex.EncodeToString(sum[:])
+	return module.NodeID(key.Public().(ed25519.PublicKey))
 }

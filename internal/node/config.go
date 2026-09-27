@@ -2,6 +2,7 @@
 package node
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -25,10 +26,25 @@ type NetworkConfig struct {
 	Relay network.RelayConfig `yaml:"relay"`
 }
 
-// ModuleConfig names a module to load; Config is decoded by the module itself.
+// ModuleConfig names a module to load. Modules compiled into the node are
+// found by name; others run in a process of their own, started with Run.
+// Config is the module's own.
 type ModuleConfig struct {
 	Name   string    `yaml:"name"`
+	Run    []string  `yaml:"run"`
 	Config yaml.Node `yaml:"config"`
+}
+
+// configJSON returns the module's config as JSON, nil if it has none.
+func (mc ModuleConfig) configJSON() (json.RawMessage, error) {
+	if mc.Config.IsZero() {
+		return nil, nil
+	}
+	var v any
+	if err := mc.Config.Decode(&v); err != nil {
+		return nil, err
+	}
+	return json.Marshal(v)
 }
 
 // LoadConfig reads a node definition. ${VAR} and ${VAR:-default} references

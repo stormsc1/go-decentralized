@@ -11,11 +11,11 @@ interface Report {
   error?: string
 }
 
-// A message or stream a node sent, as returned by debug.traffic.
+// A call or stream a node made, as returned by debug.traffic.
 interface Trace {
   time: string
-  kind: 'message' | 'stream'
-  name: string
+  kind: 'call' | 'stream'
+  ref: string // the capability called, or the stream opened
   from: string
   to?: string
   addr: string
@@ -161,9 +161,9 @@ pollTraffic()
 async function mapNetwork() {
   try {
     const res = await fetch('/v1/capabilities/debug.map_network', { method: 'POST' })
-    const body: { result?: Report[]; error?: string } = await res.json().catch(() => ({}))
-    if (!res.ok || body.error) throw new Error(body.error || res.statusText)
-    update(body.result ?? [])
+    const body: { nodes?: Report[]; message?: string } = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(body.message || res.statusText)
+    update(body.nodes ?? [])
     statusEl.textContent = `${nodes.size} nodes · updated ${new Date().toLocaleTimeString()}`
     document.body.classList.remove('stale')
   } catch (err) {
@@ -184,8 +184,8 @@ async function pollTraffic() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ since }),
     })
-    const body: { result?: Trace[] } = await res.json().catch(() => ({}))
-    if (res.ok) record(body.result ?? [])
+    const body: { traces?: Trace[] } = await res.json().catch(() => ({}))
+    if (res.ok) record(body.traces ?? [])
   } catch {
     // mapNetwork reports connection problems.
   }
@@ -301,7 +301,7 @@ function record(traces: Trace[]) {
 }
 
 function traceKey(t: Trace) {
-  return `${t.from}|${t.time}|${t.name}|${t.addr}`
+  return `${t.from}|${t.time}|${t.ref}|${t.addr}`
 }
 
 // hops returns the pairs of nodes a trace's traffic crossed: sender to
@@ -540,7 +540,7 @@ function logRow(t: Trace) {
     text('td', clock(t.time)),
     text('td', nameOf(t.from)),
     text('td', t.to ? nameOf(t.to) : t.addr),
-    text('td', t.kind === 'stream' ? `${t.name} (stream)` : t.name),
+    text('td', t.kind === 'stream' ? `${t.ref} (stream)` : t.ref),
     text('td', t.addr.startsWith('relay/') ? 'relay' : 'direct'),
     took,
     result,
@@ -550,7 +550,7 @@ function logRow(t: Trace) {
 
 // describe is what the log filter searches.
 function describe(t: Trace) {
-  return [nameOf(t.from), t.to ? nameOf(t.to) : t.addr, t.name, t.error ?? ''].join(' ').toLowerCase()
+  return [nameOf(t.from), t.to ? nameOf(t.to) : t.addr, t.ref, t.error ?? ''].join(' ').toLowerCase()
 }
 
 function clock(time: string) {

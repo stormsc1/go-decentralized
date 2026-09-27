@@ -19,11 +19,8 @@ func newProviders(ttl time.Duration) *providers {
 	return &providers{ttl: ttl, records: map[ID]map[ID]Record{}}
 }
 
-// add stores r as a provider of key if it is fresh and validly signed.
+// add stores r, a verified record, as a provider of key.
 func (p *providers) add(key ID, r Record) {
-	if !r.valid(p.ttl) {
-		return
-	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.records[key] == nil {

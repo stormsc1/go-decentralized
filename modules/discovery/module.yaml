@@ -1,0 +1,91 @@
+# yaml-language-server: $schema=../../spec/module.schema.json
+name: discovery
+version: 1.0.0
+description: Finds nodes, and the nodes that provide a capability, over a Kademlia DHT, without a central registry.
+capabilities:
+  - name: list_nodes
+    description: Lists the nodes this node knows, not the whole network (see debug.map_network).
+    output:
+      type: object
+      properties:
+        nodes: {type: array, items: {$ref: "#/$defs/node"}}
+  - name: find_node_by_id
+    description: Finds the node with the given ID.
+    input:
+      type: object
+      required: [id]
+      properties:
+        id: {$ref: "#/$defs/id"}
+    output: {$ref: "#/$defs/node"}
+  - name: find_capability_providers
+    description: Finds the nodes that provide a capability, e.g. capability=debug.report.
+    input:
+      type: object
+      required: [capability]
+      properties:
+        capability: {type: string, description: "A capability ref: <module>.<capability>."}
+    output:
+      type: object
+      properties:
+        providers: {type: array, items: {$ref: "#/$defs/node"}}
+
+  # The DHT's protocol, between discovery modules. See spec/modules/discovery.md.
+  - name: dht_find_node
+    description: Returns the contacts this node knows closest to target.
+    access: network
+    internal: true
+    input: {$ref: "#/$defs/request"}
+    output: {$ref: "#/$defs/response"}
+  - name: dht_find_providers
+    description: Returns the records this node stores of target's providers, and the contacts it knows closest to target.
+    access: network
+    internal: true
+    input: {$ref: "#/$defs/request"}
+    output: {$ref: "#/$defs/response"}
+  - name: dht_add_provider
+    description: Stores the caller's record as a provider of target.
+    access: network
+    internal: true
+    input: {$ref: "#/$defs/request"}
+    output: {$ref: "#/$defs/response"}
+
+$defs:
+  id:
+    type: string
+    pattern: "^[0-9a-f]{64}$"
+    description: A node ID, or a key in the DHT, in hex. See spec/modules/discovery.md.
+  node:
+    type: object
+    required: [id]
+    properties:
+      id: {$ref: "#/$defs/id"}
+      name: {type: string}
+      addrs: {type: array, items: {type: string}, description: Addresses to reach the node at, in order.}
+  request:
+    type: object
+    required: [target]
+    properties:
+      from: {$ref: "#/$defs/node", description: "The caller's contact, ignored unless its ID is the one the caller proved."}
+      target: {$ref: "#/$defs/id"}
+      record: {$ref: "#/$defs/record", description: "The caller's record, for dht_add_provider."}
+  response:
+    type: object
+    properties:
+      from: {$ref: "#/$defs/node", description: "The callee's contact."}
+      contacts: {type: array, items: {$ref: "#/$defs/node"}}
+      providers: {type: array, items: {$ref: "#/$defs/record"}}
+  record:
+    type: object
+    required: [data, sig]
+    description: A node's self-signed record. sig signs data, as is, for the purpose "discovery.record".
+    properties:
+      data: {type: string, contentEncoding: base64, contentMediaType: application/json, contentSchema: {$ref: "#/$defs/record_data"}}
+      sig: {type: string, contentEncoding: base64}
+  record_data:
+    type: object
+    required: [public_key, addrs, time]
+    properties:
+      public_key: {type: string, contentEncoding: base64, description: "The node's Ed25519 public key."}
+      name: {type: string}
+      addrs: {type: array, items: {type: string}, description: Every address the node can be reached at, relays included.}
+      time: {type: integer, description: When the record was signed, in Unix milliseconds.}
