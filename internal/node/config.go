@@ -10,21 +10,31 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"go-decentralized/internal/network"
+	"go-decentralized/internal/store"
 )
 
 // Config is a node definition.
 type Config struct {
-	Version string         `yaml:"version"`
-	Name    string         `yaml:"name"`
-	Desc    string         `yaml:"desc"`
-	Network NetworkConfig  `yaml:"network"`
-	Modules []ModuleConfig `yaml:"modules"`
+	Version string        `yaml:"version"`
+	Name    string        `yaml:"name"`
+	Desc    string        `yaml:"desc"`
+	Network NetworkConfig `yaml:"network"`
+	// Stores are the node's stores, by name, which modules' stores are
+	// bound to. The node's own parts use "local", which modules can't; a
+	// module's store is bound to the store its module block names, else to
+	// the only other store, or the one called "default". Both "local" and
+	// "default" are SQLite files in the data directory unless declared.
+	Stores  map[string]store.Config `yaml:"stores"`
+	Modules []ModuleConfig          `yaml:"modules"`
+	// DataDir is where stores keep their files. Programs set it; an empty
+	// one keeps every store in memory.
+	DataDir string `yaml:"-"`
 }
 
 // NetworkConfig configures how the node reaches, and finds, other nodes.
 type NetworkConfig struct {
-	// Bootstrap are addresses (host:port) of any nodes already in the
-	// network, to join it through.
+	// Bootstrap are addresses of any nodes already in the network, to join
+	// it through.
 	Bootstrap []string `yaml:"bootstrap"`
 	// Plaintext makes the node serve plain HTTP instead of dressing its
 	// listener in TLS: for platforms that end TLS in front of it.
@@ -42,6 +52,9 @@ type ModuleConfig struct {
 	Name   string    `yaml:"name"`
 	Run    []string  `yaml:"run"`
 	Config yaml.Node `yaml:"config"`
+	// Stores binds the module's stores, by the names its manifest gives
+	// them, to the node's.
+	Stores map[string]string `yaml:"stores"`
 }
 
 // configJSON returns the module's config as JSON, nil if it has none.

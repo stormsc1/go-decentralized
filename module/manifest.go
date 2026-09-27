@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 )
@@ -19,9 +20,9 @@ type Manifest struct {
 	// Events are what the module tells subscribers as it happens, see
 	// Env.Emit.
 	Events []Event `yaml:"events" json:"events,omitempty"`
-	// Entities are the types of records the module keeps in its node's
-	// store.
-	Entities []Entity `yaml:"entities" json:"entities,omitempty"`
+	// Stores are the stores the module needs, which its node binds to its
+	// own.
+	Stores []Store `yaml:"stores" json:"stores,omitempty"`
 	// Defs are schemas the other schemas refer to, as "#/$defs/<name>".
 	Defs map[string]any `yaml:"$defs" json:"$defs,omitempty"`
 }
@@ -34,7 +35,24 @@ type Event struct {
 	Schema map[string]any `yaml:"schema" json:"schema,omitempty"`
 }
 
-// Entity is a type of record a module keeps in its node's store.
+// Store is a store a module needs: of records of the entity types it lists,
+// or of key-value pairs. The node binds it to one of its own stores of that
+// kind.
+type Store struct {
+	Name        string `yaml:"name" json:"name"`
+	Type        string `yaml:"type" json:"type"`
+	Description string `yaml:"description" json:"description,omitempty"`
+	// Entities are the types of records an entity store keeps.
+	Entities []Entity `yaml:"entities" json:"entities,omitempty"`
+}
+
+// Kinds of stores.
+const (
+	EntityStore = "entity"
+	KVStore     = "kv"
+)
+
+// Entity is a type of record a module keeps in one of its stores.
 type Entity struct {
 	Name        string `yaml:"name" json:"name"`
 	Description string `yaml:"description" json:"description,omitempty"`
@@ -127,17 +145,30 @@ func (m Manifest) Validate() error {
 		}
 	}
 	seen = map[string]bool{}
-	for _, e := range m.Entities {
-		if !name.MatchString(e.Name) || seen[e.Name] {
-			return fmt.Errorf("manifest %s: invalid or repeated entity name %q", m.Name, e.Name)
+	for _, s := range m.Stores {
+		if !name.MatchString(s.Name) || seen[s.Name] {
+			return fmt.Errorf("manifest %s: invalid or repeated store name %q", m.Name, s.Name)
 		}
-		seen[e.Name] = true
-		if !object(e.Schema) {
-			return fmt.Errorf("manifest %s: entity %s: records must be objects", m.Name, e.Name)
+		seen[s.Name] = true
+		if !slices.Contains([]string{EntityStore, KVStore}, s.Type) {
+			return fmt.Errorf("manifest %s: store %s: type must be %s or %s", m.Name, s.Name, EntityStore, KVStore)
 		}
-		for _, f := range e.Indexes {
-			if !field.MatchString(f) {
-				return fmt.Errorf("manifest %s: entity %s: invalid index %q", m.Name, e.Name, f)
+		if s.Type != EntityStore && len(s.Entities) > 0 {
+			return fmt.Errorf("manifest %s: store %s: only entity stores have entities", m.Name, s.Name)
+		}
+		entities := map[string]bool{}
+		for _, e := range s.Entities {
+			if !name.MatchString(e.Name) || entities[e.Name] {
+				return fmt.Errorf("manifest %s: store %s: invalid or repeated entity name %q", m.Name, s.Name, e.Name)
+			}
+			entities[e.Name] = true
+			if !object(e.Schema) {
+				return fmt.Errorf("manifest %s: entity %s: records must be objects", m.Name, e.Name)
+			}
+			for _, f := range e.Indexes {
+				if !field.MatchString(f) {
+					return fmt.Errorf("manifest %s: entity %s: invalid index %q", m.Name, e.Name, f)
+				}
 			}
 		}
 	}
@@ -150,9 +181,19 @@ func object(s map[string]any) bool {
 	return s == nil || s["$ref"] != nil || s["type"] == "object"
 }
 
+// Store returns the store called name.
+func (m Manifest) Store(name string) (Store, bool) {
+	for _, s := range m.Stores {
+		if s.Name == name {
+			return s, true
+		}
+	}
+	return Store{}, false
+}
+
 // Entity returns the entity type called name.
-func (m Manifest) Entity(name string) (Entity, bool) {
-	for _, e := range m.Entities {
+func (s Store) Entity(name string) (Entity, bool) {
+	for _, e := range s.Entities {
 		if e.Name == name {
 			return e, true
 		}

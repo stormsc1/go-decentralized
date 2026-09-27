@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -34,9 +35,11 @@ type RelayConfig struct {
 	Via []string `yaml:"via"`
 }
 
-// incoming tells a node about a caller's connection, over its reservation.
-type incoming struct {
-	Connection string `json:"connection"`
+// notice is what a relay tells a node over its reservation: that it holds
+// the reservation, or that a caller's connection waits.
+type notice struct {
+	Reserved   bool   `json:"reserved,omitempty"`
+	Connection string `json:"connection,omitempty"`
 }
 
 // waiting is a caller's connection waiting for its node to take it.
@@ -101,6 +104,14 @@ func (n *Network) holdReservation(ctx context.Context, relay string) error {
 	defer enc.Close()
 	go keepAlive(held, ws)
 
+	// The relay confirms once it holds the reservation, so the address is
+	// only advertised once callers can use it.
+	var first notice
+	if data, err := enc.Read(); err != nil {
+		return err
+	} else if json.Unmarshal(data, &first) != nil || !first.Reserved {
+		return errors.New("the relay didn't confirm the reservation")
+	}
 	addr := relay + relayPrefix + n.id
 	n.mu.Lock()
 	n.relayed = append(n.relayed, addr)
@@ -117,11 +128,13 @@ func (n *Network) holdReservation(ctx context.Context, relay string) error {
 		if err != nil {
 			return err
 		}
-		var in incoming
+		var in notice
 		if err := json.Unmarshal(data, &in); err != nil {
 			return err
 		}
-		go n.takeConnection(ctx, relay, in.Connection)
+		if in.Connection != "" {
+			go n.takeConnection(ctx, relay, in.Connection)
+		}
 	}
 }
 
@@ -179,6 +192,11 @@ func (n *Network) serveReserve(w http.ResponseWriter, r *http.Request) {
 	}
 	n.reservations[id] = enc
 	n.mu.Unlock()
+	if confirmation, err := json.Marshal(notice{Reserved: true}); err == nil {
+		if err := enc.Write(confirmation); err != nil {
+			enc.Close() // the loop below then ends, and cleans up
+		}
+	}
 
 	slog.Info("relay: reservation opened", "node", id)
 	// The node never sends over its reservation, so this blocks until it
@@ -219,9 +237,9 @@ func (n *Network) serveConnect(w http.ResponseWriter, r *http.Request) {
 		close(c.done)
 	}()
 
-	notice, err := json.Marshal(incoming{Connection: name})
+	incoming, err := json.Marshal(notice{Connection: name})
 	if err == nil {
-		err = reservation.Write(notice)
+		err = reservation.Write(incoming)
 	}
 	if err != nil {
 		http.Error(w, "the node's reservation is gone", http.StatusServiceUnavailable)

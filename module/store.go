@@ -30,15 +30,44 @@ type Pair struct {
 // Decode decodes the value into v.
 func (p Pair) Decode(v any) error { return Decode(p.Value, v) }
 
-// Entities are a module's records of one of its entity types, which its node
-// keeps. See spec/modules.md, "Storage".
+// A Store is one of the module's stores, which its manifest declares and
+// its node keeps. See spec/modules.md, "Storage".
+type Store struct {
+	env  Env
+	name string
+}
+
+// Store returns the module's store called name, as its manifest names it.
+// An empty name means the module's only store of the kind then used.
+func (env Env) Store(name string) Store { return Store{env, name} }
+
+// Entities returns the module's records of the entity type called name, in
+// its only entity store.
+func (env Env) Entities(name string) Entities { return env.Store("").Entities(name) }
+
+// KV returns the module's key-value pairs, in its only key-value store.
+func (env Env) KV() KV { return env.Store("").KV() }
+
+// Batch starts a batch of writes to the records in the module's only entity
+// store.
+func (env Env) Batch() *Batch { return env.Store("").Batch() }
+
+// call calls a store capability about this store.
+func (s Store) call(ctx context.Context, name string, in map[string]any, out any) error {
+	if s.name != "" {
+		in["store"] = s.name
+	}
+	return s.env.Call(ctx, "store."+name, in, out)
+}
+
+// Entities are the records of one of a module's entity types.
 type Entities struct {
-	env    Env
+	store  Store
 	entity string
 }
 
-// Entities returns the module's records of the entity type called name.
-func (env Env) Entities(name string) Entities { return Entities{env, name} }
+// Entities returns the store's records of the entity type called name.
+func (s Store) Entities(name string) Entities { return Entities{s, name} }
 
 // Query selects records by their indexed fields.
 type Query struct {
@@ -68,49 +97,52 @@ func (e Entities) put(ctx context.Context, id string, record any, ifVersion *int
 	if ifVersion != nil {
 		in["if_version"] = *ifVersion
 	}
-	return out.Version, e.env.Call(ctx, "store.put", in, &out)
+	return out.Version, e.store.call(ctx, "put", in, &out)
 }
 
 // Get decodes the record with the given ID into out and returns its version.
 // It fails with CodeNotFound if there's none.
 func (e Entities) Get(ctx context.Context, id string, out any) (int64, error) {
 	var r Record
-	if err := e.env.Call(ctx, "store.get", map[string]any{"entity": e.entity, "id": id}, &r); err != nil {
+	if err := e.store.call(ctx, "get", map[string]any{"entity": e.entity, "id": id}, &r); err != nil {
 		return 0, err
 	}
 	return r.Version, r.Decode(out)
 }
 
 func (e Entities) Delete(ctx context.Context, id string) error {
-	return e.env.Call(ctx, "store.delete", map[string]any{"entity": e.entity, "id": id}, nil)
+	return e.store.call(ctx, "delete", map[string]any{"entity": e.entity, "id": id}, nil)
 }
 
 // DeleteIf deletes the record only if it has the given version, else fails
 // with CodeConflict.
 func (e Entities) DeleteIf(ctx context.Context, id string, version int64) error {
-	return e.env.Call(ctx, "store.delete", map[string]any{"entity": e.entity, "id": id, "if_version": version}, nil)
+	return e.store.call(ctx, "delete", map[string]any{"entity": e.entity, "id": id, "if_version": version}, nil)
 }
 
 // Query returns the records that match q.
 func (e Entities) Query(ctx context.Context, q Query) ([]Record, error) {
 	var out struct{ Records []Record }
-	in := struct {
-		Entity string `json:"entity"`
-		Query
-	}{e.entity, q}
-	return out.Records, e.env.Call(ctx, "store.query", in, &out)
+	in := map[string]any{"entity": e.entity, "order_by": q.OrderBy, "desc": q.Desc}
+	if q.Where != nil {
+		in["where"] = q.Where
+	}
+	if q.Limit > 0 {
+		in["limit"] = q.Limit
+	}
+	return out.Records, e.store.call(ctx, "query", in, &out)
 }
 
-// A Batch is writes to the module's records, of any of its entity types,
-// that happen all or none. See Env.Batch.
+// A Batch is writes to a store's records, of any of its entity types, that
+// happen all or none. See Store.Batch.
 type Batch struct {
-	env Env
-	ops []map[string]any
+	store Store
+	ops   []map[string]any
 }
 
-// Batch starts a batch of writes to the module's records. Commit applies
+// Batch starts a batch of writes to the store's records. Commit applies
 // them.
-func (env Env) Batch() *Batch { return &Batch{env: env} }
+func (s Store) Batch() *Batch { return &Batch{store: s} }
 
 func (b *Batch) add(op map[string]any, ifVersion *int64) *Batch {
 	if ifVersion != nil {
@@ -141,20 +173,20 @@ func (b *Batch) DeleteIf(entity, id string, version int64) *Batch {
 // fails the whole batch with CodeConflict.
 func (b *Batch) Commit(ctx context.Context) ([]int64, error) {
 	var out struct{ Versions []int64 }
-	return out.Versions, b.env.Call(ctx, "store.batch", map[string]any{"ops": b.ops}, &out)
+	return out.Versions, b.store.call(ctx, "batch", map[string]any{"ops": b.ops}, &out)
 }
 
-// KV is a module's key-value pairs, which its node keeps.
-type KV struct{ env Env }
+// KV is the key-value pairs of one of a module's stores.
+type KV struct{ store Store }
 
-// KV returns the module's key-value pairs.
-func (env Env) KV() KV { return KV{env} }
+// KV returns the store's key-value pairs.
+func (s Store) KV() KV { return KV{s} }
 
 // Get decodes the value of key into out and returns its version. It fails
 // with CodeNotFound if the key isn't there.
 func (kv KV) Get(ctx context.Context, key string, out any) (int64, error) {
 	var p Pair
-	if err := kv.env.Call(ctx, "store.kv_get", map[string]string{"key": key}, &p); err != nil {
+	if err := kv.store.call(ctx, "kv_get", map[string]any{"key": key}, &p); err != nil {
 		return 0, err
 	}
 	return p.Version, p.Decode(out)
@@ -163,24 +195,24 @@ func (kv KV) Get(ctx context.Context, key string, out any) (int64, error) {
 // Put sets the value of key and returns its new version.
 func (kv KV) Put(ctx context.Context, key string, value any) (int64, error) {
 	var out struct{ Version int64 }
-	return out.Version, kv.env.Call(ctx, "store.kv_put", map[string]any{"key": key, "value": value}, &out)
+	return out.Version, kv.store.call(ctx, "kv_put", map[string]any{"key": key, "value": value}, &out)
 }
 
 // PutIf sets the value only if it has the given version, 0 if the key isn't
 // there yet. Otherwise it fails with CodeConflict.
 func (kv KV) PutIf(ctx context.Context, key string, value any, version int64) (int64, error) {
 	var out struct{ Version int64 }
-	return out.Version, kv.env.Call(ctx, "store.kv_put", map[string]any{"key": key, "value": value, "if_version": version}, &out)
+	return out.Version, kv.store.call(ctx, "kv_put", map[string]any{"key": key, "value": value, "if_version": version}, &out)
 }
 
 func (kv KV) Delete(ctx context.Context, key string) error {
-	return kv.env.Call(ctx, "store.kv_delete", map[string]string{"key": key}, nil)
+	return kv.store.call(ctx, "kv_delete", map[string]any{"key": key}, nil)
 }
 
 // DeleteIf deletes the key only if its value has the given version, else
 // fails with CodeConflict.
 func (kv KV) DeleteIf(ctx context.Context, key string, version int64) error {
-	return kv.env.Call(ctx, "store.kv_delete", map[string]any{"key": key, "if_version": version}, nil)
+	return kv.store.call(ctx, "kv_delete", map[string]any{"key": key, "if_version": version}, nil)
 }
 
 // List returns up to limit pairs whose key starts with prefix, by key.
@@ -190,18 +222,18 @@ func (kv KV) List(ctx context.Context, prefix string, limit int) ([]Pair, error)
 	if limit > 0 {
 		in["limit"] = limit
 	}
-	return out.Pairs, kv.env.Call(ctx, "store.kv_list", in, &out)
+	return out.Pairs, kv.store.call(ctx, "kv_list", in, &out)
 }
 
-// A KVBatch is writes to the module's pairs that happen all or none. See
+// A KVBatch is writes to a store's pairs that happen all or none. See
 // KV.Batch.
 type KVBatch struct {
-	env Env
-	ops []map[string]any
+	store Store
+	ops   []map[string]any
 }
 
 // Batch starts a batch of writes to the pairs. Commit applies them.
-func (kv KV) Batch() *KVBatch { return &KVBatch{env: kv.env} }
+func (kv KV) Batch() *KVBatch { return &KVBatch{store: kv.store} }
 
 func (b *KVBatch) add(op map[string]any, ifVersion *int64) *KVBatch {
 	if ifVersion != nil {
@@ -232,5 +264,5 @@ func (b *KVBatch) DeleteIf(key string, version int64) *KVBatch {
 // fails the whole batch with CodeConflict.
 func (b *KVBatch) Commit(ctx context.Context) ([]int64, error) {
 	var out struct{ Versions []int64 }
-	return out.Versions, b.env.Call(ctx, "store.kv_batch", map[string]any{"ops": b.ops}, &out)
+	return out.Versions, b.store.call(ctx, "kv_batch", map[string]any{"ops": b.ops}, &out)
 }

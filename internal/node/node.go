@@ -30,9 +30,7 @@ type Node struct {
 	ID      string
 	Network *network.Network
 	routing *routing.Routing
-	store   store.Store
-	records store.EntityStore // the store's records
-	pairs   store.KVStore     // its pairs
+	stores  map[string]store.Store // the node's stores, by name, see Config.Stores
 	key     ed25519.PrivateKey
 
 	// Process modules may call while later modules load.
@@ -52,6 +50,14 @@ type loaded struct {
 	runtime  string        // "builtin", "native" or "process"
 	native   module.Module // native modules only
 	process  *process      // process modules only
+	bindings map[string]string  // the node's stores for the module's, from the node definition
+	stores   map[string]binding // the module's stores, by its names for them
+}
+
+// binding is where one of a module's stores lives.
+type binding struct {
+	store string // the node's store it's bound to
+	kind  string
 }
 
 // handler handles calls to a capability: input in, result out.
@@ -67,33 +73,28 @@ type capability struct {
 //go:embed node.module.yaml
 var nodeManifest []byte
 
-// New starts every module listed in cfg: native ones from factories, and
-// process ones by running their command. Calls from other nodes arrive
-// through nw, and modules keep their data in st.
-func New(cfg Config, key ed25519.PrivateKey, nw *network.Network, st store.Store, factories map[string]module.Factory) (_ *Node, err error) {
+// New opens the node's stores and starts every module listed in cfg: native
+// ones from factories, and process ones by running their command. Calls
+// from other nodes arrive through nw.
+func New(cfg Config, key ed25519.PrivateKey, nw *network.Network, factories map[string]module.Factory) (_ *Node, err error) {
 	n := &Node{
 		Config:   cfg,
 		ID:       module.NodeID(key.Public().(ed25519.PublicKey)),
 		Network:  nw,
-		store:    st,
 		key:      key,
 		caps:     map[string]*capability{},
 		events:   map[string]*jsonschema.Schema{},
 		entities: map[string]entityType{},
 		subs:     map[*Subscription]struct{}{},
 	}
-	var ok bool
-	if n.records, ok = store.Entities(st); !ok {
-		return nil, fmt.Errorf("node %q: the store keeps no records", cfg.Name)
-	}
-	if n.pairs, ok = store.KV(st); !ok {
-		return nil, fmt.Errorf("node %q: the store keeps no key-value pairs", cfg.Name)
-	}
 	defer func() {
 		if err != nil {
-			n.stop()
+			n.close()
 		}
 	}()
+	if err := n.openStores(); err != nil {
+		return nil, fmt.Errorf("node %q: %w", cfg.Name, err)
+	}
 	if err := n.add(&loaded{manifest: module.MustParseManifest(nodeManifest), runtime: "builtin"}, natives(n.builtins())); err != nil {
 		return nil, err
 	}
@@ -153,6 +154,7 @@ func (n *Node) load(mc ModuleConfig, factories map[string]module.Factory) error 
 		}
 		l = &loaded{manifest: m.Manifest(), runtime: "native", native: m}
 	}
+	l.bindings = mc.Stores
 	if l.manifest.Name != mc.Name {
 		err = fmt.Errorf("the module calls itself %q", l.manifest.Name)
 	} else if l.process != nil {
@@ -204,23 +206,26 @@ func (n *Node) add(l *loaded, handlers map[string]handler) error {
 		}
 		events[m.Name+"."+e.Name] = schema
 	}
-	entities := map[string]entityType{}
-	for _, e := range m.Entities {
-		schema, err := compile(m, e.Schema)
-		if err != nil {
-			return fmt.Errorf("%s entity %s: schema: %w", m.Name, e.Name, err)
-		}
-		for _, field := range e.Indexes {
-			if err := n.records.Index(context.Background(), m.Name, e.Name, field); err != nil {
-				return fmt.Errorf("%s entity %s: index %s: %w", m.Name, e.Name, field, err)
-			}
-		}
-		entities[m.Name+"."+e.Name] = entityType{schema: schema, indexes: e.Indexes}
+	entities, err := n.bindStores(l)
+	if err != nil {
+		return err
 	}
 	maps.Copy(n.caps, caps)
 	maps.Copy(n.events, events)
 	maps.Copy(n.entities, entities)
 	n.modules = append(n.modules, l)
+	return nil
+}
+
+// module returns the module called name, if the node runs it.
+func (n *Node) module(name string) *loaded {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	for _, l := range n.modules {
+		if l.manifest.Name == name {
+			return l
+		}
+	}
 	return nil
 }
 
@@ -412,14 +417,18 @@ func (n *Node) Run(ctx context.Context) {
 		}
 	}
 	wg.Wait()
+	n.close()
 }
 
-// stop stops the modules' processes.
-func (n *Node) stop() {
+// close stops the modules' processes and closes the stores.
+func (n *Node) close() {
 	for _, l := range n.loadedModules() {
 		if l.process != nil {
 			l.process.stop()
 		}
+	}
+	for _, s := range n.stores {
+		_ = s.Close()
 	}
 }
 

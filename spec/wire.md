@@ -84,7 +84,7 @@ An error is a JSON-RPC error whose `data.code` is one of these, or a module's ow
 
 Nodes that accept no connections, e.g. behind NAT, stay reachable through a relay: a node configured to serve as one.
 
-1. The node opens a WebSocket at `/v1/relay/reserve` on the relay and runs the session handshake over it, as the initiator, which proves its ID to the relay and encrypts the relay's notices. It pings every 30 seconds; the relay holds the reservation while the WebSocket lasts. The node advertises `<relay address>/v1/relay/<its ID>`.
+1. The node opens a WebSocket at `/v1/relay/reserve` on the relay and runs the session handshake over it, as the initiator, which proves its ID to the relay and encrypts the relay's notices. The relay confirms with `{"reserved": true}` and holds the reservation while the WebSocket lasts; only then does the node advertise `<relay address>/v1/relay/<its ID>`. It pings every 30 seconds.
 2. A caller dials the relayed address like any address: a WebSocket at `/v1/relay/<target ID>`. The relay answers 404 if it holds no reservation for the target. Otherwise it names the connection with an unguessable secret and tells the target over its reservation, encrypted: `{"connection": "<name>"}`.
 3. The target opens a WebSocket at `/v1/relay/accept?connection=<name>`, which only it can, since only it was told the name. The relay then completes the caller's WebSocket and forwards WebSocket messages between the two, as they are. It answers the caller 504 if the target doesn't take the connection within 10 seconds.
 4. The caller runs the session handshake over the forwarded messages, end to end with the target, who answers it as it would any inbound session. The relay only sees ciphertext.
