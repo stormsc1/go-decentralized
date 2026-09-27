@@ -29,6 +29,10 @@ events:
       properties:
         name: {type: string}
         caller: {type: string, description: The ID of the node that called.}
+config:
+  type: object
+  properties:
+    greeting: {type: string, description: Starts every greeting. Defaults to Hello.}
 $defs:
   greeting:
     type: object

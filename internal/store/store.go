@@ -14,6 +14,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Kinds of stores, as modules declare them.
@@ -25,14 +27,32 @@ const (
 // Kinds lists the kinds there are.
 var Kinds = []string{KindEntity, KindKV}
 
-// Config configures a store, as a node definition declares it.
+// Config configures a store, as a node definition declares it: which driver,
+// and the options that driver takes, e.g. path for sqlite.
 type Config struct {
-	// Driver is the kind of database, as its package registers it:
-	// "sqlite", the default.
-	Driver string `yaml:"driver" json:"driver"`
-	// Path is where a file-based driver keeps the database: a file, relative
-	// to the node's data directory unless absolute, or ":memory:".
-	Path string `yaml:"path,omitempty" json:"path,omitempty"`
+	Driver  string
+	Options Options
+}
+
+// Options are a driver's options, as the node definition gives them.
+type Options map[string]any
+
+// String returns the option called name as a string, "" if it isn't set.
+func (o Options) String(name string) string {
+	s, _ := o[name].(string)
+	return s
+}
+
+// UnmarshalYAML reads a store's block: driver, and the rest as options.
+func (c *Config) UnmarshalYAML(n *yaml.Node) error {
+	var m map[string]any
+	if err := n.Decode(&m); err != nil {
+		return err
+	}
+	driver, _ := m["driver"].(string)
+	delete(m, "driver")
+	*c = Config{Driver: driver, Options: m}
+	return nil
 }
 
 // A Store is an open database. It implements the kinds it supports, see

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -41,8 +42,12 @@ func (n *Node) openStores() error {
 		if name == "" {
 			return errors.New("a store has no name")
 		}
-		if cfg.Path == "" && (cfg.Driver == "" || cfg.Driver == "sqlite") {
-			cfg.Path = n.Config.Name + "." + name + ".db"
+		if (cfg.Driver == "" || cfg.Driver == "sqlite") && cfg.Options.String("path") == "" {
+			cfg.Options = maps.Clone(cfg.Options)
+			if cfg.Options == nil {
+				cfg.Options = store.Options{}
+			}
+			cfg.Options["path"] = n.Config.Name + "." + name + ".db"
 		}
 		s, err := store.Open(cfg, n.Config.DataDir)
 		if err != nil {
@@ -51,7 +56,7 @@ func (n *Node) openStores() error {
 		n.stores[name] = s
 	}
 	if n.stores[localStore] == nil {
-		s, err := store.Open(store.Config{Path: n.Config.Name + ".local.db"}, n.Config.DataDir)
+		s, err := store.Open(store.Config{Options: store.Options{"path": n.Config.Name + ".local.db"}}, n.Config.DataDir)
 		if err != nil {
 			return fmt.Errorf("store %s: %w", localStore, err)
 		}

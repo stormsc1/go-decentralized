@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -23,6 +24,10 @@ type Manifest struct {
 	// Stores are the stores the module needs, which its node binds to its
 	// own.
 	Stores []StoreSpec `yaml:"stores" json:"stores,omitempty"`
+	// Config is the JSON Schema of the module's block in the node
+	// definition, an object, which the node checks the block against. Unset
+	// means any object.
+	Config map[string]any `yaml:"config" json:"config,omitempty"`
 	// Defs are schemas the other schemas refer to, as "#/$defs/<name>".
 	Defs map[string]any `yaml:"$defs" json:"$defs,omitempty"`
 }
@@ -51,6 +56,8 @@ const (
 	KindEntity = "entity"
 	KindKV     = "kv"
 )
+
+var kinds = []string{KindEntity, KindKV}
 
 // Entity is a type of record a module keeps in one of its stores.
 type Entity struct {
@@ -119,6 +126,9 @@ func (m Manifest) Validate() error {
 	if !name.MatchString(m.Name) {
 		return fmt.Errorf("manifest: invalid module name %q", m.Name)
 	}
+	if !object(m.Config) {
+		return fmt.Errorf("manifest %s: config must be an object", m.Name)
+	}
 	seen := map[string]bool{}
 	for _, c := range m.Capabilities {
 		if !name.MatchString(c.Name) || seen[c.Name] {
@@ -150,8 +160,8 @@ func (m Manifest) Validate() error {
 			return fmt.Errorf("manifest %s: invalid or repeated store name %q", m.Name, s.Name)
 		}
 		seen[s.Name] = true
-		if !slices.Contains([]string{KindEntity, KindKV}, s.Type) {
-			return fmt.Errorf("manifest %s: store %s: type must be %s or %s", m.Name, s.Name, KindEntity, KindKV)
+		if !slices.Contains(kinds, s.Type) {
+			return fmt.Errorf("manifest %s: store %s: type must be one of %s", m.Name, s.Name, strings.Join(kinds, ", "))
 		}
 		if s.Type != KindEntity && len(s.Entities) > 0 {
 			return fmt.Errorf("manifest %s: store %s: only entity stores have entities", m.Name, s.Name)

@@ -38,7 +38,26 @@ $defs:                     # schemas others refer to, as #/$defs/<name>
 - Schemas are JSON Schema 2020-12. Inputs and results are objects; an unset schema means any object. Byte strings are `{type: string, contentEncoding: base64}`.
 - `local` capabilities are for the node itself: its modules and its local tools. `network` ones are for other nodes too.
 - `internal: true` marks capabilities of a protocol between modules, such as the DHT's. Nodes don't announce them and tools don't list them. Access still applies.
+- `config` is the JSON Schema of the module's block in the node definition, see "Configuration".
 - The names `module` and those of the node's own modules, `node`, `network`, `routing` and `store`, are reserved.
+
+## Configuration
+
+A module's environment is its block in the node definition, `modules[].config`: whatever the module needs from where it runs, such as a connection string for tables of its own. The manifest's `config` schema says what the block may hold, and the node checks the block against it before serving the module, so a wrong block keeps the node from starting; an unset schema means any object. The module gets the block as its config (`module.start`'s `config`; Go's `Factory` decodes it). Nodes also tell modules their data directory, for files a module keeps of its own; it's empty if the node keeps nothing on disk.
+
+```yaml
+# module.yaml
+config:
+  type: object
+  required: [database_url]
+  properties:
+    database_url: {type: string, format: uri, description: Postgres, for the module's own tables.}
+
+# node definition
+modules:
+  - name: greenlight
+    config: {database_url: "${DATABASE_URL}"}
+```
 
 ## Calls
 
@@ -72,19 +91,21 @@ Subscribers are local tools, such as apps, on the local API: `GET /v1/events?ref
 
 ## Storage
 
-A module declares the stores it needs in its manifest, each of a kind: `entity`, records of the entity types it lists, or `kv`, key-value pairs. The node definition declares the node's stores, each on a driver compiled into the node (SQLite so far), and each module's block binds every store the module declares to one that keeps that kind of data; a store left unbound, or bound to one of another kind, keeps the node from starting. Every node also has a store called `local`, for its own parts, which modules can't use, so nodes sharing a store never share it. Each module's data is apart from the others', in a namespace per module and store.
+A module declares the stores it needs in its manifest, each of a kind: `entity`, records of the entity types it lists, or `kv`, key-value pairs. The node definition declares the node's stores, each on a driver compiled into the node with the options that driver takes (SQLite so far), and each module's block binds every store the module declares to one that keeps that kind of data; a store left unbound, or bound to one of another kind, keeps the node from starting. Every node also has a store called `local`, for its own parts, which modules can't use, so nodes sharing a store never share it. Each module's data is apart from the others', in a namespace per module and store.
 
 ```yaml
 # node definition
 stores:
-  main: {driver: sqlite}                   # <node name>.main.db, in the data directory
+  main: {driver: sqlite}                     # <node name>.main.db, in the data directory
   cache: {driver: sqlite, path: ":memory:"}
 modules:
   - name: chat
-    stores: {events: main, seen: cache}    # the module's names for its stores
+    stores: {events: main, seen: cache}      # the module's names for its stores
 ```
 
-Modules reach their data through the `store` capabilities (schemas: `internal/node/store.module.yaml`), which only modules can call, naming the store as their manifest does, or not at all when they have one of that kind:
+A module with data of a shape of its own, such as its own Postgres tables, takes what it needs to connect as configuration (see "Configuration") and connects itself; the node isn't involved.
+
+Modules reach their records and pairs through the `store` capabilities (schemas: `internal/node/store.module.yaml`), which only modules can call, naming the store as their manifest does, or not at all when they have one of that kind:
 
 - Records of the entity types in their manifest: `store.put`, `get`, `delete` and `query`. A record is a JSON object with an ID, up to 256 characters, and the node rejects records that don't match their type's schema with `invalid_argument`. Queries select and sort by indexed fields and the ID, and return up to 100 records unless they say, at most 1000.
 - Key-value pairs, of any JSON value: `store.kv_get`, `kv_put`, `kv_delete` and `kv_list`, which lists keys by prefix.
@@ -130,7 +151,7 @@ modules:
 - On calls the node sends, `_meta.from` is the ID of the node that made the call.
 - On calls the module sends, `_meta.to`, a node ID, asks the node to call that node. Without it, the call is to the node's own capabilities. A call without an `id` goes on as one, and the node doesn't answer it.
 
-The node's first call is `module.start`, with input `{node: {id, name}, config}`, where `config` is the module's block from the node definition. It returns `{manifest}`, and from then on the node serves the module's capabilities. The node may also call `module.inspect`, which returns the module's state for debugging, or `{}`.
+The node's first call is `module.start`, with input `{node: {id, name, data_dir}, config}`, where `config` is the module's block from the node definition (see "Configuration"). It returns `{manifest}`, and from then on the node serves the module's capabilities. The node may also call `module.inspect`, which returns the module's state for debugging, or `{}`.
 
 The node stops a module by closing its stdin, and the module MUST then exit. The node kills modules that haven't within 5 seconds, and restarts modules whose process exits. Calls to a module fail with `unavailable` while it's down.
 

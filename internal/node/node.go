@@ -50,6 +50,7 @@ type loaded struct {
 	runtime  string             // "builtin", "native" or "process"
 	native   module.Module      // native modules only
 	process  *process           // process modules only
+	config   json.RawMessage    // the module's block in the node definition
 	bindings map[string]string  // the node's stores for the module's, from the node definition
 	stores   map[string]binding // the module's stores, by its names for them
 }
@@ -155,7 +156,7 @@ func (n *Node) load(mc ModuleConfig, factories map[string]module.Factory) error 
 		}
 		l = &loaded{manifest: m.Manifest(), runtime: "native", native: m}
 	}
-	l.bindings = mc.Stores
+	l.config, l.bindings = config, mc.Stores
 	if l.manifest.Name != mc.Name {
 		err = fmt.Errorf("the module calls itself %q", l.manifest.Name)
 	} else if l.process != nil {
@@ -206,6 +207,21 @@ func (n *Node) add(l *loaded, handlers map[string]handler) error {
 			return fmt.Errorf("%s event %s: schema: %w", m.Name, e.Name, err)
 		}
 		events[m.Name+"."+e.Name] = schema
+	}
+	// The module's block in the node definition must be what the module
+	// says it takes.
+	if m.Config != nil {
+		schema, err := compile(m, m.Config)
+		if err != nil {
+			return fmt.Errorf("%s: config schema: %w", m.Name, err)
+		}
+		block := l.config
+		if len(block) == 0 {
+			block = json.RawMessage("{}")
+		}
+		if err := validate(schema, block); err != nil {
+			return fmt.Errorf("%s: config: %v", m.Name, err)
+		}
 	}
 	entities, err := n.bindStores(l)
 	if err != nil {
@@ -298,6 +314,7 @@ func (n *Node) env(name string) module.Env {
 	return module.Env{
 		NodeID:   n.ID,
 		NodeName: n.Config.Name,
+		DataDir:  n.Config.DataDir,
 		Call: func(ctx context.Context, ref string, in, out any) error {
 			body, err := module.Encode(in)
 			if err != nil {

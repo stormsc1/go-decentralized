@@ -104,7 +104,7 @@ func (p *process) start() (module.Manifest, error) {
 		config = json.RawMessage("{}")
 	}
 	body, err := json.Marshal(map[string]any{
-		"node":   map[string]string{"id": p.n.ID, "name": p.n.Config.Name},
+		"node":   map[string]string{"id": p.n.ID, "name": p.n.Config.Name, "data_dir": p.n.Config.DataDir},
 		"config": config,
 	})
 	if err != nil {

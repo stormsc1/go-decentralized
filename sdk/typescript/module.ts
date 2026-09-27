@@ -26,6 +26,9 @@ export interface Env {
   // sign signs data with the node's key, for a purpose starting with the
   // module's name.
   sign(purpose: string, data: Uint8Array): Promise<Uint8Array>
+  // dataDir is the node's data directory, for files the module keeps of
+  // its own; empty if the node keeps nothing on disk.
+  dataDir: string
 }
 
 // Call is the call being handled.
@@ -89,9 +92,10 @@ export function serve(start: (config: any, env: Env) => Module | Promise<Module>
       send({ id, method, params: { ...input, _meta: meta } })
     })
 
-  const env = (node: { id: string; name: string }): Env => ({
+  const env = (node: { id: string; name: string; data_dir?: string }): Env => ({
     nodeId: node.id,
     nodeName: node.name,
+    dataDir: node.data_dir ?? '',
     call: (ref, input) => call(ref, input),
     callNode: (id, ref, input) => call(ref, input, { to: id }),
     notifyNode: (id, ref, input = {}) => send({ method: ref, params: { ...input, _meta: { to: id } } }),

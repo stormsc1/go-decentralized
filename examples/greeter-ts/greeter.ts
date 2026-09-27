@@ -39,6 +39,10 @@ const manifest = {
       output: greeting,
     },
   ],
+  config: {
+    type: 'object',
+    properties: { greeting: { type: 'string', description: 'Starts every greeting. Defaults to Hello.' } },
+  },
   events: [
     {
       name: 'greeted',

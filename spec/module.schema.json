@@ -32,6 +32,10 @@
       "description": "The stores the module needs, which the node binds to its own.",
       "items": { "$ref": "#/$defs/store" }
     },
+    "config": {
+      "$ref": "#/$defs/schema",
+      "description": "JSON Schema of the module's block in the node definition, which the node checks the block against. Unset means any object."
+    },
     "$defs": {
       "type": "object",
       "description": "Schemas the capabilities' schemas refer to, as #/$defs/<name>.",

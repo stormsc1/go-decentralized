@@ -19,7 +19,7 @@ func open(t *testing.T, path string) store.Store {
 	if path != "" {
 		dataDir = filepath.Dir(path)
 	}
-	s, err := store.Open(store.Config{Driver: "sqlite", Path: path}, dataDir)
+	s, err := store.Open(store.Config{Driver: "sqlite", Options: store.Options{"path": path}}, dataDir)
 	if err != nil {
 		t.Fatal(err)
 	}

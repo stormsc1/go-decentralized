@@ -85,8 +85,9 @@ func (s *server) handle(ctx context.Context, call Call) (json.RawMessage, error)
 
 type startInput struct {
 	Node struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		DataDir string `json:"data_dir"`
 	} `json:"node"`
 	Config json.RawMessage `json:"config"`
 }
@@ -100,6 +101,7 @@ func (s *server) start(input json.RawMessage) (json.RawMessage, error) {
 	env := Env{
 		NodeID:   in.Node.ID,
 		NodeName: in.Node.Name,
+		DataDir:  in.Node.DataDir,
 		Call: func(ctx context.Context, ref string, in, out any) error {
 			return s.call(ctx, Call{Ref: ref}, in, out)
 		},

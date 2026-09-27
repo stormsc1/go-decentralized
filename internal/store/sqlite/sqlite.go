@@ -16,7 +16,7 @@ import (
 
 func init() {
 	store.Register("sqlite", func(cfg store.Config, dataDir string) (store.Store, error) {
-		return Open(resolve(cfg.Path, dataDir))
+		return Open(resolve(cfg.Options.String("path"), dataDir))
 	})
 }
 

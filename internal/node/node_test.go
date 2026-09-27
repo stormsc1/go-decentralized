@@ -68,6 +68,9 @@ stores:
           required: [text, time]
           properties: {text: {type: string}, time: {type: integer}}
         indexes: [time]
+config:
+  type: object
+  properties: {greeting: {type: string}}
 `))
 
 func newEcho(_ func(any) error, env module.Env) (module.Module, error) { return echo{env}, nil }
@@ -338,8 +341,9 @@ func TestStores(t *testing.T) {
 	cfg := func(stores map[string]store.Config, bindings map[string]string) Config {
 		return Config{Name: "test", Network: NetworkConfig{MDNS: new(bool)}, Stores: stores, Modules: []ModuleConfig{{Name: "echo", Stores: bindings}}}
 	}
-	one := map[string]store.Config{"a": {Path: ":memory:"}}
-	two := map[string]store.Config{"a": {Path: ":memory:"}, "b": {Path: ":memory:"}}
+	memory := store.Config{Options: store.Options{"path": ":memory:"}}
+	one := map[string]store.Config{"a": memory}
+	two := map[string]store.Config{"a": memory, "b": memory}
 	for _, bad := range []struct {
 		cfg  Config
 		want string
@@ -367,6 +371,36 @@ func TestStores(t *testing.T) {
 	var v int
 	if err := n.local("test").Get(ctx, "k", &v); err != nil || v != 1 {
 		t.Fatalf("local Get = %d, %v", v, err)
+	}
+}
+
+// A module's manifest may give its block in the node definition a schema,
+// which the node checks the block against before serving the module. The
+// block is the module's environment: e.g. a connection string for tables of
+// its own.
+func TestConfigSchema(t *testing.T) {
+	load := func(config string) error {
+		cfg, err := ParseConfig("test", []byte(`
+name: test
+network: {mdns: false}
+stores:
+  main: {path: ":memory:"}
+modules:
+  - name: echo
+    stores: {notes: main}
+    config: `+config+`
+`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = newNode(t, cfg)
+		return err
+	}
+	if err := load(`{greeting: 1}`); err == nil || !strings.Contains(err.Error(), "config") {
+		t.Fatalf("started with a block its schema rejects: err = %v", err)
+	}
+	if err := load(`{greeting: hi}`); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -447,7 +481,7 @@ func launch(t *testing.T, bootstrap []string, mc ModuleConfig, opts ...func(*Con
 	cfg := Config{
 		Name:    "test",
 		Network: NetworkConfig{Bootstrap: bootstrap, MDNS: new(bool)},
-		Stores:  map[string]store.Config{"main": {Path: ":memory:"}},
+		Stores:  map[string]store.Config{"main": {Options: store.Options{"path": ":memory:"}}},
 		Modules: []ModuleConfig{mc},
 	}
 	for _, opt := range opts {

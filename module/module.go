@@ -71,6 +71,9 @@ type Env struct {
 	// Emit tells the node's subscribers, such as its users' apps, of the
 	// module's event called name, which its manifest declares.
 	Emit func(ctx context.Context, name string, body any) error
+	// DataDir is the node's data directory, for files the module keeps of
+	// its own; empty if the node keeps nothing on disk.
+	DataDir string
 	// Sign signs data with the node's key, for a purpose starting with the
 	// module's name, e.g. "greeter.token". See Verify.
 	Sign func(ctx context.Context, purpose string, data []byte) ([]byte, error)
