@@ -54,7 +54,7 @@ func listening(t *testing.T, relay RelayConfig) (*Network, string) {
 	t.Cleanup(func() { l.Close() })
 	n := testNetwork(t, l.Addr().(*net.TCPAddr).Port, relay)
 	go n.serve(l)
-	return n, l.Addr().String()
+	return n, "wss://" + l.Addr().String()
 }
 
 // whoami calls test.whoami on to and returns who it saw calling.
@@ -182,6 +182,21 @@ func TestDialBack(t *testing.T) {
 	unreachable := testNetwork(t, 1, RelayConfig{}) // nothing listens on port 1
 	if !unreachable.checkReachability(ctx, peers) || len(unreachable.DirectAddrs()) != 0 {
 		t.Fatalf("node that doesn't listen is reachable at %v", unreachable.DirectAddrs())
+	}
+}
+
+// A node dials back over a session the other side dialed, too: then the
+// address it knows is the URL it dialed, not an IP and port.
+func TestDialBackOverASessionItDialed(t *testing.T) {
+	ctx := context.Background()
+	relay, relayAddr := listening(t, RelayConfig{Serve: true})
+	helper, _ := listening(t, RelayConfig{})
+	// helper bootstraps off relay, so relay's calls to helper reuse it.
+	if _, err := helper.Call(ctx, Peer{Addrs: []string{relayAddr}}, refPing, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !relay.checkReachability(ctx, []Peer{{ID: helper.id}}) || len(relay.DirectAddrs()) != 1 {
+		t.Fatalf("relay isn't reachable: %v", relay.DirectAddrs())
 	}
 }
 

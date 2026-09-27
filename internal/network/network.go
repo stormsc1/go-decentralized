@@ -1,12 +1,13 @@
-// Package network is a node's transport. It carries calls between nodes,
-// as messages over mutual TLS, directly or through relays, and works out the
-// addresses the node can be reached at. Modules never see it: the node
-// dispatches the calls it receives, and makes the calls modules ask for.
-// See spec/wire.md.
+// Package network is a node's transport. It carries calls between nodes as
+// messages over WebSockets, encrypted end to end (noise.go), directly or
+// through relays, and works out the addresses the node can be reached at.
+// Modules never see it: the node dispatches the calls it receives, and makes
+// the calls modules ask for. See spec/wire.md.
 package network
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/tls"
 	_ "embed"
@@ -15,8 +16,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/coder/websocket"
-
+	"go-decentralized/internal/noise"
 	"go-decentralized/module"
 )
 
@@ -25,11 +25,15 @@ import (
 type Handler func(ctx context.Context, ref string, body json.RawMessage) (json.RawMessage, error)
 
 type Config struct {
-	// Key is the node's key: its ID, and its identity in TLS.
+	// Key is the node's key: its ID, which sessions prove.
 	Key ed25519.PrivateKey
 	// ListenPort is the port this node accepts connections on, 0 if none.
 	ListenPort int
-	// Announce are addresses always advertised, e.g. a public DNS name.
+	// Plaintext makes the node serve plain HTTP instead of dressing its
+	// listener in self-signed TLS: for platforms that end TLS in front of
+	// it, such as Cloud Run. Sessions stay encrypted end to end either way.
+	Plaintext bool
+	// Announce are addresses always advertised, e.g. a public URL.
 	Announce []string
 	// Private lets addresses that only nearby peers can reach (private,
 	// loopback, ...) count as reachable, for networks without public
@@ -40,20 +44,22 @@ type Config struct {
 
 // Network is a node's transport.
 type Network struct {
-	cfg  Config
-	id   string
-	cert tls.Certificate
+	cfg      Config
+	id       string
+	cert     tls.Certificate  // dressing for the listener, see serve
+	static   *ecdh.PrivateKey // the sessions' Noise key
+	identity []byte           // ties static to the node's key, see noise.go
 
 	mu           sync.Mutex
 	handler      Handler
-	sessions     map[string][]*session      // open sessions, by peer ID
-	dialing      map[string]*dialing        // sessions being dialed, by peer
-	reachable    []string                   // direct addresses confirmed by dial-back
-	observed     []string                   // public IPs peers saw this node at
-	relayed      []string                   // addresses through relays holding a reservation for us
-	reservations map[string]*websocket.Conn // held here, as a relay, by node ID
-	waiting      map[string]*waiting        // callers' connections, until their node takes them
-	traces       []Trace                    // what this node sent, oldest first
+	sessions     map[string][]*session // open sessions, by peer ID
+	dialing      map[string]*dialing   // sessions being dialed, by peer
+	reachable    []string              // direct addresses confirmed by dial-back
+	observed     []string              // public IPs peers saw this node at
+	relayed      []string              // addresses through relays holding a reservation for us
+	reservations map[string]*secured   // held here, as a relay, by node ID
+	waiting      map[string]*waiting   // callers' connections, until their node takes them
+	traces       []Trace               // what this node sent, oldest first
 }
 
 //go:embed network.module.yaml
@@ -64,6 +70,18 @@ func New(cfg Config) (*Network, error) {
 	if err != nil {
 		return nil, err
 	}
+	static, err := noise.NewStatic()
+	if err != nil {
+		return nil, err
+	}
+	sig, err := module.Sign(cfg.Key, noisePurpose, static.PublicKey().Bytes())
+	if err != nil {
+		return nil, err
+	}
+	payload, err := json.Marshal(identity{Key: cfg.Key.Public().(ed25519.PublicKey), Sig: sig})
+	if err != nil {
+		return nil, err
+	}
 	empty := func(s string) bool { return s == "" } // unset ${VAR}s
 	cfg.Announce = slices.DeleteFunc(cfg.Announce, empty)
 	cfg.Relay.Via = slices.DeleteFunc(cfg.Relay.Via, empty)
@@ -71,9 +89,11 @@ func New(cfg Config) (*Network, error) {
 		cfg:          cfg,
 		id:           module.NodeID(cfg.Key.Public().(ed25519.PublicKey)),
 		cert:         cert,
+		static:       static,
+		identity:     payload,
 		sessions:     map[string][]*session{},
 		dialing:      map[string]*dialing{},
-		reservations: map[string]*websocket.Conn{},
+		reservations: map[string]*secured{},
 		waiting:      map[string]*waiting{},
 	}
 	return n, nil

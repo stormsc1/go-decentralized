@@ -6,7 +6,7 @@ Status: draft, version 1. Anything may change until it's frozen.
 
 | Document | Covers |
 |---|---|
-| [wire.md](wire.md) | Identity, TLS, addresses, messages, calls and relays between nodes |
+| [wire.md](wire.md) | Identity, connections, the Noise handshake, addresses, messages and relays |
 | [modules.md](modules.md) | Manifests, capabilities, what nodes give modules, runtimes |
 | [routing.md](routing.md) | How nodes find each other: the DHT, and the local network |
 | [identity.md](identity.md) | DIDs for people and organisations, signed data and devices |

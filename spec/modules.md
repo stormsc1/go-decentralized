@@ -45,7 +45,7 @@ A call names a capability by its ref and carries an input. It ends with a result
 2. fails it with `permission_denied` if the caller is another node and the capability is local;
 3. fails it with `invalid_argument` if the input doesn't match the capability's input schema. An empty input is `{}`.
 
-The module learns who called: the ID the calling node proved over TLS, or its own node's ID for local calls.
+The module learns who called: the ID the calling node proved in its session's handshake, or its own node's ID for local calls.
 
 ## What nodes give modules
 
@@ -84,7 +84,7 @@ Modules sign with the node's key through `node.sign`, and only for purposes that
 "decentralized-signature" 0x00 <purpose> 0x00 <data>
 ```
 
-So a signature made for one purpose, or for TLS, can't pass for another. Signatures cover data as it's carried, so verifying one never needs re-encoding.
+So a signature made for one purpose can't pass for another, nor for the session handshake's. Signatures cover data as it's carried, so verifying one never needs re-encoding.
 
 ## Runtimes
 

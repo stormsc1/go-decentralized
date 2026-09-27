@@ -1,11 +1,12 @@
 # TODO
 
-## Relays aren't verified
-A relay address names the node behind the relay, not the relay, so a caller
-can't tell a relay from an impostor at its address. End-to-end TLS keeps an
-impostor from reading or altering traffic, but it could drop it.
+## Callers don't verify relays
+A node reserving on a relay sees the relay's ID in their handshake, but
+nothing says which ID to expect, and callers never see it: a caller can't
+tell a relay from an impostor at its address. The end-to-end handshake keeps
+an impostor from reading or altering traffic, but it could drop it.
 
-Fix: put the relay's ID in relay addresses, and verify it too.
+Fix: expected relay IDs in the relay config and in relayed addresses.
 
 ## Streams, and events between modules
 Messages carry calls, their ends and calls without one; events only reach
@@ -28,7 +29,7 @@ may call, and tokens for the local API.
 
 ## Conformance tests
 The spec has no test suite, so another implementation can't check itself
-against it. Fix: a runner that drives any node over TLS and any process
+against it. Fix: a runner that drives any node over WebSocket and any process
 module over stdio, with golden messages and signatures.
 
 ## Decision: deleting chat messages

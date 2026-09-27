@@ -26,6 +26,9 @@ type NetworkConfig struct {
 	// Bootstrap are addresses (host:port) of any nodes already in the
 	// network, to join it through.
 	Bootstrap []string `yaml:"bootstrap"`
+	// Plaintext makes the node serve plain HTTP instead of dressing its
+	// listener in TLS: for platforms that end TLS in front of it.
+	Plaintext bool `yaml:"plaintext"`
 	// MDNS advertises this node and finds others on the local network.
 	// Defaults to true.
 	MDNS  *bool               `yaml:"mdns"`

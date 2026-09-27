@@ -17,7 +17,7 @@ type Trace struct {
 	// Ref is the capability called, or the stream opened.
 	Ref  string `json:"ref"`
 	From string `json:"from"`
-	// To is the ID of the node that answered, as proven over TLS.
+	// To is the ID of the node that answered, as its handshake proved.
 	To       string        `json:"to,omitempty"`
 	Addr     string        `json:"addr"`
 	Duration time.Duration `json:"duration"`

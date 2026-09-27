@@ -3,40 +3,34 @@ package network
 import (
 	"context"
 	"crypto/rand"
-	"io"
+	"encoding/json"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 )
 
 // Nodes that accept no connections, e.g. behind a NAT, stay reachable
-// through a relay. Such a node keeps a reservation on the relay: a WebSocket
-// it opened itself, over which the relay tells it about each caller. The node
-// then opens a WebSocket to the relay to take the caller's connection, and
-// the relay splices the two. TLS runs end to end between caller and node, so
-// the relay only sees ciphertext, and a reservation is keyed by the ID its
-// node proved. The node advertises relay/<relay host:port>/<node id>.
+// through a relay: a node configured to serve as one. Such a node keeps a
+// reservation on the relay: a WebSocket it opened itself, secured like a
+// session, over which the relay names each caller's connection. The node
+// takes a connection at acceptPath, and the relay then forwards WebSocket
+// messages between it and the caller, who runs the session's handshake over
+// them, end to end: the relay only sees ciphertext. The node advertises
+// <relay address>/v1/relay/<its ID>, which callers dial like any address.
 
-const (
-	relayScheme = "relay"
-	takeTimeout = 10 * time.Second // for a node to take a caller's connection
-)
+const takeTimeout = 10 * time.Second // for a node to take a caller's connection
 
 // RelayConfig is the network.relay block of a node definition.
 type RelayConfig struct {
 	// Serve makes this node a relay for nodes that accept no connections.
 	Serve bool `yaml:"serve"`
-	// Via are relays (host:port) to keep a reservation on, making this node
-	// reachable through them.
+	// Via are the addresses of relays to keep a reservation on, making this
+	// node reachable through them.
 	Via []string `yaml:"via"`
 }
 
@@ -47,9 +41,8 @@ type incoming struct {
 
 // waiting is a caller's connection waiting for its node to take it.
 type waiting struct {
-	node  string        // the node it's for
-	taken chan net.Conn // the node's end, once it takes it
-	done  chan struct{} // closed once the relay is done with it
+	taken chan *websocket.Conn // the node's end, once it takes it
+	done  chan struct{}        // closed once the relay is done with it
 }
 
 // isRelay reports whether addr is through a relay.
@@ -58,35 +51,18 @@ func isRelay(addr string) bool {
 	return ok
 }
 
-// relayAddr splits a relay/<relay host:port>/<node id> address.
+// relayAddr splits a relayed address, <relay address>/v1/relay/<node ID>,
+// into the relay's own address and the target's ID.
 func relayAddr(addr string) (relay, target string, ok bool) {
-	rest, ok := strings.CutPrefix(addr, relayScheme+"/")
-	if !ok {
+	i := strings.Index(addr, relayPrefix)
+	if i < 0 {
 		return "", "", false
 	}
-	return strings.Cut(rest, "/")
+	return addr[:i], addr[i+len(relayPrefix):], true
 }
 
-// dialRelay connects to target through the relay at relay.
-func (n *Network) dialRelay(ctx context.Context, relay, target string) (net.Conn, error) {
-	ws, err := n.openRelay(ctx, relay, "relay.connect", connectPath+"?id="+url.QueryEscape(target))
-	if err != nil {
-		return nil, err
-	}
-	return websocket.NetConn(context.Background(), ws, websocket.MessageBinary), nil
-}
-
-// openRelay opens a WebSocket to the relay at relay, at path, tracing it as
-// name.
-func (n *Network) openRelay(ctx context.Context, relay, name, path string) (*websocket.Conn, error) {
-	start := time.Now()
-	ws, answered, err := n.connect(ctx, relay, "", path)
-	n.trace(ctx, "stream", name, relay, answered, start, err)
-	return ws, err
-}
-
-// keepReservation holds a reservation on relay until ctx is done,
-// reconnecting when it drops.
+// keepReservation holds a reservation on the relay at relay until ctx is
+// done, reconnecting when it drops.
 func (n *Network) keepReservation(ctx context.Context, relay string) {
 	for {
 		err := n.holdReservation(ctx, relay)
@@ -102,23 +78,30 @@ func (n *Network) keepReservation(ctx context.Context, relay string) {
 	}
 }
 
-// holdReservation opens a reservation on relay, advertises the relay address
-// and serves the connections callers make through it, until the reservation
-// closes. The connections it took stay open until ctx is done.
+// holdReservation opens a reservation on relay, advertises the relayed
+// address and takes the connections callers make through it, until the
+// reservation closes. The sessions it took stay open until ctx is done.
 func (n *Network) holdReservation(ctx context.Context, relay string) error {
-	ws, err := n.openRelay(ctx, relay, "relay.reserve", reservePath)
+	// The reservation is secured like a session: it proves this node's ID to
+	// the relay, and the relay's notices arrive encrypted.
+	start := time.Now()
+	ws, err := n.dialWS(ctx, relay+reservePath)
+	var enc *secured
+	if err == nil {
+		if _, enc, err = n.secure(ctx, ws, true, ""); err != nil {
+			ws.CloseNow()
+		}
+	}
+	n.trace(ctx, "stream", "relay.reserve", relay, "", start, err)
 	if err != nil {
 		return err
 	}
 	held, stop := context.WithCancel(ctx)
 	defer stop()
-	defer ws.CloseNow()
+	defer enc.Close()
 	go keepAlive(held, ws)
-	l := &relayed{conns: make(chan net.Conn), done: make(chan struct{}), addr: relayPath(relayScheme + "/" + relay)}
-	defer l.Close()
-	go n.serve(l)
 
-	addr := relayScheme + "/" + relay + "/" + n.id
+	addr := relay + relayPrefix + n.id
 	n.mu.Lock()
 	n.relayed = append(n.relayed, addr)
 	n.mu.Unlock()
@@ -130,19 +113,36 @@ func (n *Network) holdReservation(ctx context.Context, relay string) error {
 	slog.Info("relay: reachable through relay", "addr", addr)
 
 	for {
-		var in incoming
-		if err := wsjson.Read(held, ws, &in); err != nil {
+		data, err := enc.Read()
+		if err != nil {
 			return err
 		}
-		go func() {
-			ws, err := n.openRelay(ctx, relay, "relay.accept", acceptPath+"?connection="+url.QueryEscape(in.Connection))
-			if err != nil {
-				slog.Debug("relay: can't take a connection", "relay", relay, "err", err)
-				return
-			}
-			l.push(websocket.NetConn(ctx, ws, websocket.MessageBinary))
-		}()
+		var in incoming
+		if err := json.Unmarshal(data, &in); err != nil {
+			return err
+		}
+		go n.takeConnection(ctx, relay, in.Connection)
 	}
+}
+
+// takeConnection takes a caller's connection from the relay, and answers the
+// session the caller opens over it.
+func (n *Network) takeConnection(ctx context.Context, relay, connection string) {
+	start := time.Now()
+	ws, err := n.dialWS(ctx, relay+acceptPath+"?connection="+url.QueryEscape(connection))
+	var peer string
+	var sc *secured
+	if err == nil {
+		if peer, sc, err = n.secure(ctx, ws, false, ""); err != nil {
+			ws.CloseNow()
+		}
+	}
+	n.trace(ctx, "stream", "relay.accept", relay, peer, start, err)
+	if err != nil {
+		slog.Debug("relay: can't take a connection", "relay", relay, "err", err)
+		return
+	}
+	n.startSession(sc, peer, relay+relayPrefix, false, true)
 }
 
 // keepAlive pings ws until ctx is done, and closes it if the other end stops
@@ -166,178 +166,49 @@ func keepAlive(ctx context.Context, ws *websocket.Conn) {
 	}
 }
 
-// relayed are the connections callers make through a relay, for serve.
-type relayed struct {
-	conns chan net.Conn
-	done  chan struct{}
-	once  sync.Once
-	addr  relayPath
-}
-
-func (l *relayed) push(c net.Conn) {
-	select {
-	case l.conns <- newReadAhead(c, l.addr):
-	case <-l.done:
-		c.Close()
-	}
-}
-
-func (l *relayed) Accept() (net.Conn, error) {
-	select {
-	case c := <-l.conns:
-		return c, nil
-	case <-l.done:
-		return nil, net.ErrClosed
-	}
-}
-
-func (l *relayed) Close() error {
-	l.once.Do(func() { close(l.done) })
-	return nil
-}
-
-func (l *relayed) Addr() net.Addr { return l.addr }
-
-// relayPath is the remote address of connections through a relay:
-// "relay/<relay host:port>".
-type relayPath string
-
-func (relayPath) Network() string  { return relayScheme }
-func (p relayPath) String() string { return string(p) }
-
-// readAhead reads a connection ahead, in a goroutine, so that reads time out
-// without closing it, as HTTP servers need when they hand a connection over:
-// websocket.NetConn closes a connection whose deadline passes. Writes have
-// no deadline.
-type readAhead struct {
-	net.Conn
-	remote net.Addr
-	data   chan []byte   // what was read ahead
-	err    error         // why reading stopped, once data is closed
-	closed chan struct{} // closed with the connection
-	once   sync.Once
-	buf    []byte
-
-	mu       sync.Mutex
-	deadline time.Time
-	moved    chan struct{} // closed when the deadline moves
-}
-
-func newReadAhead(c net.Conn, remote net.Addr) *readAhead {
-	r := &readAhead{Conn: c, remote: remote, data: make(chan []byte), closed: make(chan struct{}), moved: make(chan struct{})}
-	go func() {
-		defer close(r.data)
-		for {
-			buf := make([]byte, 32<<10)
-			n, err := c.Read(buf)
-			if n > 0 {
-				select {
-				case r.data <- buf[:n]:
-				case <-r.closed:
-					return
-				}
-			}
-			if err != nil {
-				r.err = err
-				return
-			}
-		}
-	}()
-	return r
-}
-
-func (r *readAhead) Read(p []byte) (int, error) {
-	for len(r.buf) == 0 {
-		r.mu.Lock()
-		deadline, moved := r.deadline, r.moved
-		r.mu.Unlock()
-		var timeout <-chan time.Time
-		if !deadline.IsZero() {
-			wait := time.Until(deadline)
-			if wait <= 0 {
-				return 0, os.ErrDeadlineExceeded
-			}
-			t := time.NewTimer(wait)
-			defer t.Stop()
-			timeout = t.C
-		}
-		select {
-		case b, ok := <-r.data:
-			if !ok {
-				if r.err == nil {
-					return 0, io.EOF
-				}
-				return 0, r.err
-			}
-			r.buf = b
-		case <-timeout:
-			return 0, os.ErrDeadlineExceeded
-		case <-moved:
-		}
-	}
-	n := copy(p, r.buf)
-	r.buf = r.buf[n:]
-	return n, nil
-}
-
-func (r *readAhead) SetDeadline(t time.Time) error { return r.SetReadDeadline(t) }
-
-func (r *readAhead) SetReadDeadline(t time.Time) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.deadline = t
-	close(r.moved)
-	r.moved = make(chan struct{})
-	return nil
-}
-
-func (r *readAhead) SetWriteDeadline(time.Time) error { return nil }
-
-func (r *readAhead) RemoteAddr() net.Addr { return r.remote }
-
-func (r *readAhead) Close() error {
-	r.once.Do(func() { close(r.closed) })
-	return r.Conn.Close()
-}
-
 // serveReserve holds a reservation for the node at the other end, by the ID
-// it proved over TLS, until it closes.
+// it proves, until it closes.
 func (n *Network) serveReserve(w http.ResponseWriter, r *http.Request) {
-	id := peerNode(*r.TLS)
-	ws, err := websocket.Accept(w, r, nil)
+	id, enc, err := n.accept(w, r)
 	if err != nil {
 		return
 	}
 	n.mu.Lock()
 	if old := n.reservations[id]; old != nil {
-		old.CloseNow()
+		old.Close()
 	}
-	n.reservations[id] = ws
+	n.reservations[id] = enc
 	n.mu.Unlock()
 
 	slog.Info("relay: reservation opened", "node", id)
-	<-ws.CloseRead(r.Context()).Done()
+	// The node never sends over its reservation, so this blocks until it
+	// closes, answering its pings.
+	for {
+		if _, err := enc.Read(); err != nil {
+			break
+		}
+	}
 	slog.Info("relay: reservation closed", "node", id)
 
 	n.mu.Lock()
-	if n.reservations[id] == ws {
+	if n.reservations[id] == enc {
 		delete(n.reservations, id)
 	}
 	n.mu.Unlock()
 }
 
 // serveConnect tells the node a caller asks for about the caller's
-// connection, over its reservation, and splices it with the node's once it
-// takes it.
+// connection, over its reservation, and forwards between the two once the
+// node takes it.
 func (n *Network) serveConnect(w http.ResponseWriter, r *http.Request) {
-	node := r.URL.Query().Get("id")
+	node := r.PathValue("id")
 	reservation := find(n, n.reservations, node)
 	if reservation == nil {
 		http.Error(w, "no reservation for that node", http.StatusNotFound)
 		return
 	}
 	name := rand.Text()
-	c := &waiting{node: node, taken: make(chan net.Conn), done: make(chan struct{})}
+	c := &waiting{taken: make(chan *websocket.Conn), done: make(chan struct{})}
 	n.mu.Lock()
 	n.waiting[name] = c
 	n.mu.Unlock()
@@ -348,62 +219,74 @@ func (n *Network) serveConnect(w http.ResponseWriter, r *http.Request) {
 		close(c.done)
 	}()
 
-	ctx, cancel := context.WithTimeout(r.Context(), takeTimeout)
-	defer cancel()
-	if err := wsjson.Write(ctx, reservation, incoming{Connection: name}); err != nil {
+	notice, err := json.Marshal(incoming{Connection: name})
+	if err == nil {
+		err = reservation.Write(notice)
+	}
+	if err != nil {
 		http.Error(w, "the node's reservation is gone", http.StatusServiceUnavailable)
 		return
 	}
-	var taken net.Conn
+	var taken *websocket.Conn
 	select {
 	case taken = <-c.taken:
-	case <-ctx.Done():
+	case <-time.After(takeTimeout):
 		http.Error(w, "the node didn't take the connection", http.StatusGatewayTimeout)
 		return
-	}
-	ws, err := websocket.Accept(w, r, nil)
-	if err != nil {
-		taken.Close()
+	case <-r.Context().Done():
 		return
 	}
-	bridge(websocket.NetConn(r.Context(), ws, websocket.MessageBinary), taken)
+	// The caller speaks the session's subprotocol with the relay: the real
+	// negotiation is the handshake it runs with the node.
+	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{subprotocol}})
+	if err != nil {
+		taken.CloseNow()
+		return
+	}
+	forward(ws, taken)
 }
 
 // serveAccept hands the node at the other end the caller's connection it was
-// told about.
+// told about. The connection's name is an unguessable secret that only
+// reached the node, over its reservation.
 func (n *Network) serveAccept(w http.ResponseWriter, r *http.Request) {
 	c := find(n, n.waiting, r.URL.Query().Get("connection"))
 	if c == nil {
 		http.Error(w, "no such connection", http.StatusNotFound)
 		return
 	}
-	if peerNode(*r.TLS) != c.node {
-		http.Error(w, "the connection is for another node", http.StatusForbidden)
-		return
-	}
-	ws, err := websocket.Accept(w, r, nil)
+	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{subprotocol}})
 	if err != nil {
 		return
 	}
-	conn := websocket.NetConn(r.Context(), ws, websocket.MessageBinary)
 	select {
-	case c.taken <- conn:
+	case c.taken <- ws:
 		<-c.done
 	case <-c.done:
-		conn.Close()
+		ws.CloseNow()
 	}
 }
 
-// bridge copies between a and b until either side is done, then closes both.
-func bridge(a, b net.Conn) {
+// forward carries WebSocket messages between a and b, as they are, until
+// either side is done, then closes both.
+func forward(a, b *websocket.Conn) {
+	ctx := context.Background()
 	done := make(chan struct{}, 2)
-	copyTo := func(dst, src net.Conn) {
-		_, _ = io.Copy(dst, src)
-		done <- struct{}{}
+	copyTo := func(dst, src *websocket.Conn) {
+		defer func() { done <- struct{}{} }()
+		for {
+			kind, data, err := src.Read(ctx)
+			if err != nil {
+				return
+			}
+			if dst.Write(ctx, kind, data) != nil {
+				return
+			}
+		}
 	}
 	go copyTo(a, b)
 	go copyTo(b, a)
 	<-done
-	a.Close()
-	b.Close()
+	a.CloseNow()
+	b.CloseNow()
 }

@@ -30,7 +30,7 @@ func (r *Routing) advertise(ctx context.Context, port int) {
 		Type:     mdnsService,
 		Instance: r.id.String()[:16],
 		Port:     port,
-		TXT:      []string{"id=" + r.id.String(), "name=" + r.cfg.Name},
+		TXT:      []string{"id=" + r.id.String(), "name=" + r.cfg.Name, "scheme=" + r.cfg.Network.Scheme()},
 	})
 	if err != nil {
 		slog.Warn("routing: can't advertise on the local network", "err", err)
@@ -59,13 +59,19 @@ func (r *Routing) browseLAN(ctx context.Context) []kademlia.Contact {
 	}
 	lan := map[kademlia.ID]kademlia.Contact{}
 	for _, e := range found {
-		c := kademlia.Contact{Addrs: e.Addrs}
+		c := kademlia.Contact{}
+		scheme := "wss"
 		for _, field := range e.TXT {
 			if id, ok := strings.CutPrefix(field, "id="); ok {
 				c.ID, _ = kademlia.ParseID(id)
 			} else if name, ok := strings.CutPrefix(field, "name="); ok {
 				c.Name = name
+			} else if s, ok := strings.CutPrefix(field, "scheme="); ok {
+				scheme = s
 			}
+		}
+		for _, hp := range e.Addrs {
+			c.Addrs = append(c.Addrs, scheme+"://"+hp)
 		}
 		if c.ID != r.id && c.ID != (kademlia.ID{}) {
 			lan[c.ID] = c

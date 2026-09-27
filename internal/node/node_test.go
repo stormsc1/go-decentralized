@@ -295,7 +295,8 @@ func start(t *testing.T, bootstrap []string, mc ModuleConfig) (*Node, string) {
 	l.Close()
 
 	key, _ := identity.Load("")
-	nw, err := network.New(network.Config{Key: key, ListenPort: l.Addr().(*net.TCPAddr).Port, Announce: []string{addr}, Private: true})
+	url := "wss://" + addr
+	nw, err := network.New(network.Config{Key: key, ListenPort: l.Addr().(*net.TCPAddr).Port, Announce: []string{url}, Private: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,5 +327,5 @@ func start(t *testing.T, bootstrap []string, mc ModuleConfig) (*Node, string) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	return n, addr
+	return n, url
 }

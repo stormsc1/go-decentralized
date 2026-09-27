@@ -46,7 +46,7 @@ Nodes find each other on the local network with multicast DNS service discovery 
 A node that accepts connections answers queries for the service `_go-decentralized._tcp.local` on 224.0.0.251, port 5353:
 
 - Its instance is the first 16 hex digits of its ID: `<instance>._go-decentralized._tcp.local`.
-- The answer is the service's PTR record, naming the instance. Additional records give the rest: an SRV record with the port it accepts connections on, at `<instance>.local`; a TXT record with `id=<its ID>` and `name=<its name>`; and an A record for each of its IPv4 addresses, other than loopback ones.
+- The answer is the service's PTR record, naming the instance. Additional records give the rest: an SRV record with the port it accepts connections on, at `<instance>.local`; a TXT record with `id=<its ID>`, `name=<its name>` and `scheme=<ws or wss>`; and an A record for each of its IPv4 addresses, other than loopback ones.
 - A query from port 5353 gets its answer by multicast, with records that live 120 seconds. Any other query is one-shot, and gets its answer directly, with its ID and question, and records that live 10 seconds (RFC 6762, section 6.7).
 
-Every 30 seconds, a node asks for the service's PTR records with a one-shot query, and keeps the nodes that answer within a second, at their LAN addresses, `<A>:<SRV port>`. These LAN peers serve as bootstrap nodes, and are tried at their LAN address first when looked up by ID.
+Every 30 seconds, a node asks for the service's PTR records with a one-shot query, and keeps the nodes that answer within a second, at their LAN addresses, `<scheme>://<A>:<SRV port>`. These LAN peers serve as bootstrap nodes, and are tried at their LAN address first when looked up by ID.

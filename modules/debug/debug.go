@@ -166,7 +166,7 @@ type pingOutput struct {
 	RTT string `json:"rtt"`
 }
 
-// ping pings the node with the given ID, through a relay if needed. TLS
+// ping pings the node with the given ID, through a relay if needed. The session
 // proves it's the right node. The first ping finds and connects to the
 // node; the second measures the round trip.
 func (m *Module) ping(ctx context.Context, in struct {

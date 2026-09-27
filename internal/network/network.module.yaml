@@ -16,8 +16,9 @@ capabilities:
       required: [port]
       properties:
         port: {type: integer, minimum: 1, maximum: 65535, description: The port the caller accepts connections on.}
+        plaintext: {type: boolean, description: The caller listens without TLS, so its address is ws://, not wss://.}
     output:
       type: object
       properties:
-        addr: {type: string, description: "The caller's IP as the node sees it, with the port."}
+        addr: {type: string, description: "The caller's address as the node sees it: its IP with the port, as a URL."}
         reachable: {type: boolean, description: Whether the caller answered a ping there.}

@@ -23,7 +23,7 @@ import (
 
 func main() {
 	configPath := flag.String("config", envOr("NODE_CONFIG", "infra/organization.node.yaml"), "path to the node definition")
-	listen := flag.String("listen", envOr("NODE_LISTEN", ":8080"), "address other nodes connect to, over TLS")
+	listen := flag.String("listen", envOr("NODE_LISTEN", ":8080"), "address to accept other nodes' connections on")
 	apiAddr := flag.String("api", envOr("NODE_API", ""), "address to serve the local HTTP API on, e.g. for the network explorer (default: none)")
 	keyPath := flag.String("key", envOr("NODE_KEY", ""), "path to the node key, created if missing (default: go-decentralized/<node name>.key in the user's config directory)")
 	dataPath := flag.String("data", envOr("NODE_DATA", ""), "path to the node's database, created if missing (default: <node name>.db next to the key)")
@@ -67,8 +67,10 @@ func main() {
 	nw, err := network.New(network.Config{
 		Key:        key,
 		ListenPort: port,
+		Plaintext:  cfg.Network.Plaintext || os.Getenv("NODE_PLAINTEXT") == "true",
 		// Reachable addresses are found via dial-backs; NODE_ADDRESS adds one
-		// that is always advertised, e.g. a public DNS name.
+		// that is always advertised, e.g. a public URL like
+		// wss://node.example.com:443.
 		Announce: []string{os.Getenv("NODE_ADDRESS")},
 		Private:  *private,
 		Relay:    cfg.Network.Relay,

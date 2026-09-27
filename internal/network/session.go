@@ -10,15 +10,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coder/websocket"
-
 	"go-decentralized/module"
 )
 
-// Calls travel over sessions: one lasting WebSocket per peer, which carries
-// calls both ways as JSON-RPC (see module.Link). Either node calls the other
-// over a session, whichever dialed it, so a node behind NAT that connected
-// to a peer can be called back without a relay.
+// Calls travel over sessions: one lasting WebSocket per peer, encrypted end
+// to end (noise.go), which carries calls both ways as JSON-RPC (see
+// module.Link). Either node calls the other over a session, whichever
+// dialed it, so a node behind NAT that connected to a peer can be called
+// back without a relay.
 const (
 	callTimeout = 10 * time.Second // for calls without a deadline of their own
 	keepEvery   = 30 * time.Second // how often sessions ping their peer
@@ -26,10 +25,10 @@ const (
 )
 
 type session struct {
-	peer     string // the peer's ID, as it proved over TLS
+	peer     string // the peer's ID, as its handshake proved
 	addr     string // the address dialed, or the peer's, for sessions it dialed
 	outbound bool
-	ws       *websocket.Conn
+	conn     *secured
 	link     *module.Link
 	done     chan struct{}
 	used     atomic.Int64 // when the last call was made, either way, in Unix nanoseconds
@@ -201,26 +200,31 @@ func expected(to Peer, addr string) (string, error) {
 // openSession dials a session at addr with the node expect, if set. Pooled
 // sessions serve later calls too; others are the caller's to close.
 func (n *Network) openSession(ctx context.Context, addr, expect string, pooled bool) (*session, error) {
-	ws, answered, err := n.connect(ctx, addr, expect, sessionPath, subprotocol)
+	ws, err := n.dialWS(ctx, sessionURL(addr))
 	if err != nil {
 		return nil, err
 	}
 	if ws.Subprotocol() != subprotocol {
 		ws.CloseNow()
-		return nil, fmt.Errorf("%.8s doesn't speak %s", answered, subprotocol)
+		return nil, fmt.Errorf("%s doesn't speak %s", addr, subprotocol)
 	}
-	return n.startSession(ws, answered, addr, true, pooled), nil
+	answered, conn, err := n.secure(ctx, ws, true, expect)
+	if err != nil {
+		ws.CloseNow()
+		return nil, err
+	}
+	return n.startSession(conn, answered, addr, true, pooled), nil
 }
 
-// startSession carries calls over ws, a WebSocket with peer, until it
-// closes.
-func (n *Network) startSession(ws *websocket.Conn, peer, addr string, outbound, pooled bool) *session {
-	ws.SetReadLimit(module.MaxMessage)
-	s := &session{peer: peer, addr: addr, outbound: outbound, ws: ws, done: make(chan struct{})}
+// startSession carries calls over conn, a secured WebSocket with peer,
+// until it closes.
+func (n *Network) startSession(conn *secured, peer, addr string, outbound, pooled bool) *session {
+	conn.ws.SetReadLimit(module.MaxMessage + module.MaxMessage/8) // encrypted, so a little larger
+	s := &session{peer: peer, addr: addr, outbound: outbound, conn: conn, done: make(chan struct{})}
 	s.used.Store(time.Now().UnixNano())
 	ctx := context.WithValue(context.Background(), remoteIDKey{}, peer)
 	ctx = context.WithValue(ctx, remoteAddrKey{}, addr)
-	s.link = module.NewLink(ctx, jsonStream{ws}, func(ctx context.Context, call module.Call) (json.RawMessage, error) {
+	s.link = module.NewLink(ctx, conn, func(ctx context.Context, call module.Call) (json.RawMessage, error) {
 		s.used.Store(time.Now().UnixNano())
 		n.mu.Lock()
 		h := n.handler
@@ -265,7 +269,7 @@ func (n *Network) keep(s *session) {
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), keepEvery/3)
-		err := s.ws.Ping(ctx)
+		err := s.conn.Ping(ctx)
 		cancel()
 		if err != nil {
 			s.close()
@@ -284,18 +288,3 @@ func (n *Network) closeSessions() {
 		}
 	}
 }
-
-// jsonStream carries JSON-RPC messages over a WebSocket, one per text
-// message.
-type jsonStream struct{ ws *websocket.Conn }
-
-func (s jsonStream) Read() ([]byte, error) {
-	_, data, err := s.ws.Read(context.Background())
-	return data, err
-}
-
-func (s jsonStream) Write(data []byte) error {
-	return s.ws.Write(context.Background(), websocket.MessageText, data)
-}
-
-func (s jsonStream) Close() error { return s.ws.CloseNow() }

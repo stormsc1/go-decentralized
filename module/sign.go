@@ -10,7 +10,7 @@ import (
 )
 
 // signaturePrefix starts everything a node signs for its modules, so the
-// signatures can't pass for ones the key makes elsewhere, e.g. in TLS.
+// signatures can't pass for ones the key makes elsewhere.
 const signaturePrefix = "decentralized-signature\x00"
 
 // signed is what's signed for purpose: prefix, purpose, NUL, data.

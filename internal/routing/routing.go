@@ -29,7 +29,7 @@ type Config struct {
 	Name string
 	// Network carries the DHT's calls, and tells the node's addresses.
 	Network *network.Network
-	// Bootstrap are addresses (host:port) of any nodes already in the network.
+	// Bootstrap are addresses of any nodes already in the network.
 	Bootstrap []string
 	// MDNS advertises this node and finds others on the local network.
 	MDNS bool

@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"go-decentralized/module"
@@ -21,6 +22,9 @@ const (
 
 type dialBackInput struct {
 	Port int `json:"port"`
+	// Plaintext says the caller listens without TLS, so its address is
+	// ws://, not wss://.
+	Plaintext bool `json:"plaintext,omitempty"`
 }
 
 type dialBackOutput struct {
@@ -45,11 +49,19 @@ func (n *Network) dialBack(ctx context.Context, in dialBackInput) (dialBackOutpu
 		// announcement.
 		return dialBackOutput{}, module.Errorf(module.CodeInvalidArgument, "dial-back to self")
 	}
-	host, _, err := net.SplitHostPort(RemoteAddr(ctx)) // fails for relay paths
-	if err != nil {
+	// The address the call came from: an IP and port for sessions the caller
+	// dialed, the URL this node dialed for its own. A relay's IP isn't the
+	// caller's.
+	from := RemoteAddr(ctx)
+	host, _, err := net.SplitHostPort(hostPort(from))
+	if err != nil || isRelay(from) {
 		return dialBackOutput{}, module.Errorf(module.CodeInvalidArgument, "no address to dial back")
 	}
-	addr := net.JoinHostPort(host, strconv.Itoa(in.Port))
+	scheme := "wss"
+	if in.Plaintext {
+		scheme = "ws"
+	}
+	addr := scheme + "://" + net.JoinHostPort(host, strconv.Itoa(in.Port))
 	s, err := n.openSession(ctx, addr, caller, false)
 	if err == nil {
 		_, err = n.call(ctx, s, refPing, nil)
@@ -85,7 +97,7 @@ func (n *Network) checkReachability(ctx context.Context, peers []Peer) bool {
 
 	var reachable, observed []string
 	for _, peer := range peers[:min(3, len(peers))] {
-		body, _ := json.Marshal(dialBackInput{Port: n.cfg.ListenPort})
+		body, _ := json.Marshal(dialBackInput{Port: n.cfg.ListenPort, Plaintext: n.cfg.Plaintext})
 		result, err := n.Call(ctx, peer, refDialBack, body)
 		var resp dialBackOutput
 		if err != nil || json.Unmarshal(result, &resp) != nil {
@@ -96,7 +108,7 @@ func (n *Network) checkReachability(ctx context.Context, peers []Peer) bool {
 		if !n.cfg.Private && !public(resp.Addr) {
 			continue
 		}
-		if host, _, err := net.SplitHostPort(resp.Addr); err == nil && !slices.Contains(observed, host) {
+		if host, _, err := net.SplitHostPort(hostPort(resp.Addr)); err == nil && !slices.Contains(observed, host) {
 			observed = append(observed, host)
 		}
 		if resp.Reachable && !slices.Contains(reachable, resp.Addr) && !slices.Contains(n.cfg.Announce, resp.Addr) {
@@ -117,13 +129,22 @@ func (n *Network) checkReachability(ctx context.Context, peers []Peer) bool {
 	return true
 }
 
+// hostPort strips an address's scheme.
+func hostPort(addr string) string {
+	if rest, ok := strings.CutPrefix(addr, "wss://"); ok {
+		return rest
+	}
+	rest, _ := strings.CutPrefix(addr, "ws://")
+	return rest
+}
+
 var sharedSpace = netip.MustParsePrefix("100.64.0.0/10") // carrier-grade NAT
 
 // public reports whether addr is globally routable, unlike private,
 // loopback, link-local and carrier-grade NAT addresses, which only nearby
 // peers can reach.
 func public(addr string) bool {
-	ap, err := netip.ParseAddrPort(addr)
+	ap, err := netip.ParseAddrPort(hostPort(addr))
 	ip := ap.Addr().Unmap()
 	return err == nil && ip.IsGlobalUnicast() && !ip.IsPrivate() && !sharedSpace.Contains(ip)
 }

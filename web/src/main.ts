@@ -255,12 +255,12 @@ function groupByNat(list: Node[]) {
 
 // linksOf draws each routing-table entry once, however many sides know each
 // other, then LAN peers not joined that way, then a relay link for every
-// relay/<relay addr>/<id> address.
+// <relay addr>/v1/relay/<id> address.
 function linksOf(list: Node[]): Link[] {
   byAddr = new Map()
   for (const node of list) {
     for (const addr of node.addrs) {
-      if (!addr.startsWith('relay/')) byAddr.set(addr, node.id)
+      if (!addr.includes('/v1/relay/')) byAddr.set(addr, node.id)
     }
   }
   const out: Link[] = []
@@ -276,7 +276,8 @@ function linksOf(list: Node[]): Link[] {
   for (const node of list) node.lan.forEach(id => join(node.id, id, 'lan'))
   for (const node of list) {
     for (const addr of node.addrs) {
-      const relay = addr.startsWith('relay/') ? byAddr.get(addr.split('/')[1]) : undefined
+      const i = addr.indexOf('/v1/relay/')
+      const relay = i > 0 ? byAddr.get(addr.slice(0, i)) : undefined
       if (relay) {
         joined.add(pairKey(node.id, relay))
         out.push({ source: node.id, target: relay, kind: 'relay' })
@@ -308,9 +309,10 @@ function traceKey(t: Trace) {
 // hops returns the pairs of nodes a trace's traffic crossed: sender to
 // receiver, or sender to relay to receiver.
 function hops(t: Trace): [string, string][] {
-  if (t.addr.startsWith('relay/')) {
-    const [, relayAddr, target] = t.addr.split('/')
-    const relay = byAddr.get(relayAddr)
+  const i = t.addr.indexOf('/v1/relay/')
+  if (i > 0) {
+    const target = t.addr.slice(i + '/v1/relay/'.length)
+    const relay = byAddr.get(t.addr.slice(0, i))
     return relay ? [[t.from, relay], [relay, t.to || target]] : []
   }
   const to = t.to || byAddr.get(t.addr)
@@ -542,7 +544,7 @@ function logRow(t: Trace) {
     text('td', nameOf(t.from)),
     text('td', t.to ? nameOf(t.to) : t.addr),
     text('td', t.kind === 'stream' ? `${t.ref} (stream)` : t.ref),
-    text('td', t.addr.startsWith('relay/') ? 'relay' : 'direct'),
+    text('td', t.addr.includes('/v1/relay/') ? 'relay' : 'direct'),
     took,
     result,
   )

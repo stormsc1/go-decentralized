@@ -49,8 +49,8 @@ x-home: &home
   depends_on: [ks-host]
 
 x-behind-nat: &behind-nat
-  BOOTSTRAP: 203.0.113.10:443
-  RELAY_VIA: 203.0.113.10:443
+  BOOTSTRAP: wss://203.0.113.10:443
+  RELAY_VIA: wss://203.0.113.10:443
 
 services:
   # SaaS provider
@@ -158,7 +158,7 @@ services:
     <<: [*node, *home]
     entrypoint: ["/clinode"]
     environment:
-      BOOTSTRAP: 203.0.113.10:443
+      BOOTSTRAP: wss://203.0.113.10:443
     stdin_open: true
     tty: true
     profiles: [cli]

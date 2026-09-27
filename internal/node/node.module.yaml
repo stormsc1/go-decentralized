@@ -96,7 +96,7 @@ $defs:
       kind: {enum: [call, notify, stream]}
       ref: {type: string}
       from: {type: string, description: ID of the calling node.}
-      to: {type: string, description: ID of the node that answered, as it proved over TLS.}
+      to: {type: string, description: ID of the node that answered, as its handshake proved.}
       addr: {type: string}
       duration: {type: integer, description: Nanoseconds.}
       error: {type: string}
