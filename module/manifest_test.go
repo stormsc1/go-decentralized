@@ -58,6 +58,20 @@ events:
 	}
 }
 
+func TestManifestRejectsEntitiesInKVStores(t *testing.T) {
+	_, err := ParseManifest([]byte(`
+name: chat
+version: 1.0.0
+stores:
+  - name: seen
+    type: kv
+    entities: [{name: receipt}]
+`))
+	if err == nil {
+		t.Fatal("parsed a key-value store with entity types")
+	}
+}
+
 func TestManifestRejectsNonObjectSchemas(t *testing.T) {
 	_, err := ParseManifest([]byte(`
 name: bad

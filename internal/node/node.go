@@ -47,9 +47,9 @@ type Node struct {
 // loaded is a module the node runs.
 type loaded struct {
 	manifest module.Manifest
-	runtime  string        // "builtin", "native" or "process"
-	native   module.Module // native modules only
-	process  *process      // process modules only
+	runtime  string             // "builtin", "native" or "process"
+	native   module.Module      // native modules only
+	process  *process           // process modules only
 	bindings map[string]string  // the node's stores for the module's, from the node definition
 	stores   map[string]binding // the module's stores, by its names for them
 }

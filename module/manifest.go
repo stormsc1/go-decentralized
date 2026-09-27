@@ -22,7 +22,7 @@ type Manifest struct {
 	Events []Event `yaml:"events" json:"events,omitempty"`
 	// Stores are the stores the module needs, which its node binds to its
 	// own.
-	Stores []Store `yaml:"stores" json:"stores,omitempty"`
+	Stores []StoreSpec `yaml:"stores" json:"stores,omitempty"`
 	// Defs are schemas the other schemas refer to, as "#/$defs/<name>".
 	Defs map[string]any `yaml:"$defs" json:"$defs,omitempty"`
 }
@@ -35,10 +35,10 @@ type Event struct {
 	Schema map[string]any `yaml:"schema" json:"schema,omitempty"`
 }
 
-// Store is a store a module needs: of records of the entity types it lists,
-// or of key-value pairs. The node binds it to one of its own stores of that
-// kind.
-type Store struct {
+// StoreSpec is a store a module needs: of records of the entity types it
+// lists, or of key-value pairs. The node binds it to one of its own stores
+// of that kind, which the module then uses as Env.Store.
+type StoreSpec struct {
 	Name        string `yaml:"name" json:"name"`
 	Type        string `yaml:"type" json:"type"`
 	Description string `yaml:"description" json:"description,omitempty"`
@@ -46,10 +46,10 @@ type Store struct {
 	Entities []Entity `yaml:"entities" json:"entities,omitempty"`
 }
 
-// Kinds of stores.
+// Kinds of stores, for StoreSpec.Type.
 const (
-	EntityStore = "entity"
-	KVStore     = "kv"
+	KindEntity = "entity"
+	KindKV     = "kv"
 )
 
 // Entity is a type of record a module keeps in one of its stores.
@@ -150,10 +150,10 @@ func (m Manifest) Validate() error {
 			return fmt.Errorf("manifest %s: invalid or repeated store name %q", m.Name, s.Name)
 		}
 		seen[s.Name] = true
-		if !slices.Contains([]string{EntityStore, KVStore}, s.Type) {
-			return fmt.Errorf("manifest %s: store %s: type must be %s or %s", m.Name, s.Name, EntityStore, KVStore)
+		if !slices.Contains([]string{KindEntity, KindKV}, s.Type) {
+			return fmt.Errorf("manifest %s: store %s: type must be %s or %s", m.Name, s.Name, KindEntity, KindKV)
 		}
-		if s.Type != EntityStore && len(s.Entities) > 0 {
+		if s.Type != KindEntity && len(s.Entities) > 0 {
 			return fmt.Errorf("manifest %s: store %s: only entity stores have entities", m.Name, s.Name)
 		}
 		entities := map[string]bool{}
@@ -182,17 +182,17 @@ func object(s map[string]any) bool {
 }
 
 // Store returns the store called name.
-func (m Manifest) Store(name string) (Store, bool) {
+func (m Manifest) Store(name string) (StoreSpec, bool) {
 	for _, s := range m.Stores {
 		if s.Name == name {
 			return s, true
 		}
 	}
-	return Store{}, false
+	return StoreSpec{}, false
 }
 
 // Entity returns the entity type called name.
-func (s Store) Entity(name string) (Entity, bool) {
+func (s StoreSpec) Entity(name string) (Entity, bool) {
 	for _, e := range s.Entities {
 		if e.Name == name {
 			return e, true

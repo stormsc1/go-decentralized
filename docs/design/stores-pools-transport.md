@@ -1,6 +1,6 @@
 # Stores, pools and transport
 
-Status: draft for review, from the design Q&A on 2026-09-27. Nothing here is built yet. Today a node has one SQLite store, namespaced by module ([spec/modules.md](../../spec/modules.md), "Storage"), and nodes authenticate with self-signed mutual TLS. **Open** marks what's still to decide.
+Status: draft for review, from the design Q&A on 2026-09-27. The transport and the stores are built; pools aren't. Today a node has one SQLite store, namespaced by module ([spec/modules.md](../../spec/modules.md), "Storage"), and nodes authenticate with self-signed mutual TLS. **Open** marks what's still to decide.
 
 Two needs drive this: organisations too big for one node, and running nodes on Cloud Run.
 
@@ -8,7 +8,7 @@ Two needs drive this: organisations too big for one node, and running nodes on C
 
 **Decided**
 - **Many stores per node, of different types.** Each is backed by a driver compiled into the node, e.g. entity stores on SQLite or Postgres, and a blob store on disk or GCS.
-- **Modules declare, nodes bind.** A module declares the stores it needs in `module.yaml`, by name and type, with their entity types. The node definition binds each to one of its stores. If the node has only one store of that type, it's the default.
+- **Modules declare, nodes bind.** A module declares the stores it needs in `module.yaml`, by name and type, with their entity types. The node definition binds each to one of its stores, explicitly: there's no default, so nothing lands in a store by accident. Only `local`, the node's own store, is implicit.
 - **Modules never see drivers.** They reach stores through built-in capabilities, as now, and name the store by their own name for it.
 - **Writes:** batches (all or nothing) and conditional writes (only if the record's version is still N). No transactions spanning calls.
 - **Sharing:** data is namespaced by module in every store, and other modules reach it through capabilities. The same module on several nodes, bound to the same store, shares its data; that's how pools work. Declared read access, e.g. search reading chat's events, can come later without breaking anything.

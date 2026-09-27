@@ -17,7 +17,6 @@ import (
 	"go-decentralized/internal/identity"
 	"go-decentralized/internal/network"
 	"go-decentralized/internal/node"
-	"go-decentralized/internal/store"
 	"go-decentralized/modules"
 )
 
@@ -26,7 +25,7 @@ func main() {
 	listen := flag.String("listen", envOr("NODE_LISTEN", ":8080"), "address to accept other nodes' connections on")
 	apiAddr := flag.String("api", envOr("NODE_API", ""), "address to serve the local HTTP API on, e.g. for the network explorer (default: none)")
 	keyPath := flag.String("key", envOr("NODE_KEY", ""), "path to the node key, created if missing (default: go-decentralized/<node name>.key in the user's config directory)")
-	dataPath := flag.String("data", envOr("NODE_DATA", ""), "path to the node's database, created if missing (default: <node name>.db next to the key)")
+	dataDir := flag.String("data", envOr("NODE_DATA", ""), "directory for the node's databases, see the node definition's stores (default: the key's directory)")
 	private := flag.Bool("private", os.Getenv("NODE_PRIVATE") == "true", "count private and loopback addresses as reachable, for networks without public addresses (e.g. local development)")
 	flag.Parse()
 
@@ -47,14 +46,10 @@ func main() {
 	if err != nil {
 		fatal("load key", err)
 	}
-	if *dataPath == "" {
-		*dataPath = filepath.Join(filepath.Dir(*keyPath), cfg.Name+".db")
+	if *dataDir == "" {
+		*dataDir = filepath.Dir(*keyPath)
 	}
-	st, err := store.OpenSQLite(*dataPath)
-	if err != nil {
-		fatal("open database", err)
-	}
-	defer st.Close()
+	cfg.DataDir = *dataDir
 	_, portStr, err := net.SplitHostPort(*listen)
 	if err != nil {
 		fatal("parse listen address", err)
@@ -78,7 +73,7 @@ func main() {
 	if err != nil {
 		fatal("start network", err)
 	}
-	n, err := node.New(cfg, key, nw, st, modules.Factories)
+	n, err := node.New(cfg, key, nw, modules.Factories)
 	if err != nil {
 		fatal("build node", err)
 	}

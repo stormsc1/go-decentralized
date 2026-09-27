@@ -22,12 +22,15 @@ capabilities:
 events:                    # what the module tells subscribers as it happens
   - name: greeted          # unique among capabilities and events
     schema: {type: object, properties: {name: {type: string}}}
-entities:                  # types of records the node keeps for the module
-  - name: visit            # [a-z][a-z0-9_]*, unique in the module
-    schema:                # schema of a record
-      type: object
-      properties: {name: {type: string}, time: {type: integer}}
-    indexes: [time]        # fields queries select and sort by
+stores:                    # stores the module needs; the node binds them to its own
+  - name: visits           # [a-z][a-z0-9_]*, unique in the module
+    type: entity           # entity (records) or kv (key-value pairs)
+    entities:              # types of records, for entity stores
+      - name: visit
+        schema:            # schema of a record
+          type: object
+          properties: {name: {type: string}, time: {type: integer}}
+        indexes: [time]    # fields queries select and sort by
 $defs:                     # schemas others refer to, as #/$defs/<name>
   greeting: {type: object, properties: {greeting: {type: string}}}
 ```
@@ -69,7 +72,19 @@ Subscribers are local tools, such as apps, on the local API: `GET /v1/events?ref
 
 ## Storage
 
-Nodes keep data for their modules, each module's apart from the others'. Its drivers are compiled into the node; the first is SQLite. Modules reach their data through the `store` capabilities (schemas: `internal/node/store.module.yaml`), which only modules can call, and only for their own data:
+A module declares the stores it needs in its manifest, each of a kind: `entity`, records of the entity types it lists, or `kv`, key-value pairs. The node definition declares the node's stores, each on a driver compiled into the node (SQLite so far), and each module's block binds every store the module declares to one that keeps that kind of data; a store left unbound, or bound to one of another kind, keeps the node from starting. Every node also has a store called `local`, for its own parts, which modules can't use, so nodes sharing a store never share it. Each module's data is apart from the others', in a namespace per module and store.
+
+```yaml
+# node definition
+stores:
+  main: {driver: sqlite}                   # <node name>.main.db, in the data directory
+  cache: {driver: sqlite, path: ":memory:"}
+modules:
+  - name: chat
+    stores: {events: main, seen: cache}    # the module's names for its stores
+```
+
+Modules reach their data through the `store` capabilities (schemas: `internal/node/store.module.yaml`), which only modules can call, naming the store as their manifest does, or not at all when they have one of that kind:
 
 - Records of the entity types in their manifest: `store.put`, `get`, `delete` and `query`. A record is a JSON object with an ID, up to 256 characters, and the node rejects records that don't match their type's schema with `invalid_argument`. Queries select and sort by indexed fields and the ID, and return up to 100 records unless they say, at most 1000.
 - Key-value pairs, of any JSON value: `store.kv_get`, `kv_put`, `kv_delete` and `kv_list`, which lists keys by prefix.
@@ -77,7 +92,7 @@ Nodes keep data for their modules, each module's apart from the others'. Its dri
 
 Every record and pair has a version, counting its writes from 1, which reads return and writes return anew. A write may require a version with `if_version`, 0 for "none yet": if the record or pair has another, the write, or the whole batch, fails with `store.conflict`. So several writers, e.g. the nodes of a pool sharing a store, don't overwrite each other unawares.
 
-`get` and `kv_get` fail with `not_found` if there's nothing there. Go's API is `Env.Entities`, `Env.KV` and `Env.Batch`.
+`get` and `kv_get` fail with `not_found` if there's nothing there. Go's API is `Env.Store`, and `Env.Entities`, `Env.KV` and `Env.Batch` for a module's only store of each kind.
 
 ## Signing
 

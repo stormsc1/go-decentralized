@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Module manifest (module.yaml)",
-  "description": "What a module declares: its name, version and capabilities. See spec/modules.md.",
+  "description": "What a module declares: its name, version, capabilities, events and stores. See spec/modules.md.",
   "type": "object",
   "required": ["name", "version"],
   "additionalProperties": false,
@@ -27,10 +27,10 @@
       "description": "What the module tells subscribers as it happens.",
       "items": { "$ref": "#/$defs/event" }
     },
-    "entities": {
+    "stores": {
       "type": "array",
-      "description": "The types of records the module keeps in its node's store.",
-      "items": { "$ref": "#/$defs/entity" }
+      "description": "The stores the module needs, which the node binds to its own.",
+      "items": { "$ref": "#/$defs/store" }
     },
     "$defs": {
       "type": "object",
@@ -90,6 +90,28 @@
         }
       }
     },
+    "store": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Unique in the module: how the module names the store in store.* calls."
+        },
+        "type": {
+          "enum": ["entity", "kv"],
+          "description": "entity: records of the entity types below. kv: key-value pairs."
+        },
+        "description": { "type": "string" },
+        "entities": {
+          "type": "array",
+          "description": "The types of records an entity store keeps.",
+          "items": { "$ref": "#/$defs/entity" }
+        }
+      }
+    },
     "entity": {
       "type": "object",
       "required": ["name"],
@@ -98,7 +120,7 @@
         "name": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*$",
-          "description": "Unique in the module."
+          "description": "Unique in the store."
         },
         "description": { "type": "string" },
         "schema": {

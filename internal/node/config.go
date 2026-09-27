@@ -19,11 +19,10 @@ type Config struct {
 	Name    string        `yaml:"name"`
 	Desc    string        `yaml:"desc"`
 	Network NetworkConfig `yaml:"network"`
-	// Stores are the node's stores, by name, which modules' stores are
-	// bound to. The node's own parts use "local", which modules can't; a
-	// module's store is bound to the store its module block names, else to
-	// the only other store, or the one called "default". Both "local" and
-	// "default" are SQLite files in the data directory unless declared.
+	// Stores are the node's stores, by name. Every store a module declares
+	// must be bound to one of them in the module's block. The node's own
+	// parts use "local", which modules can't, and which is a SQLite file in
+	// the data directory unless declared.
 	Stores  map[string]store.Config `yaml:"stores"`
 	Modules []ModuleConfig          `yaml:"modules"`
 	// DataDir is where stores keep their files. Programs set it; an empty

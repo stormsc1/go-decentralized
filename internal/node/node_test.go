@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,13 +57,16 @@ events:
     schema: {type: object, required: [text], properties: {text: {type: string}}}
   - name: poked
     schema: {type: object, properties: {from: {type: string}}}
-entities:
-  - name: note
-    schema:
-      type: object
-      required: [text, time]
-      properties: {text: {type: string}, time: {type: integer}}
-    indexes: [time]
+stores:
+  - name: notes
+    type: entity
+    entities:
+      - name: note
+        schema:
+          type: object
+          required: [text, time]
+          properties: {text: {type: string}, time: {type: integer}}
+        indexes: [time]
 `))
 
 func newEcho(_ func(any) error, env module.Env) (module.Module, error) { return echo{env}, nil }
@@ -326,9 +330,64 @@ func TestCallByID(t *testing.T) {
 	}
 }
 
+// A node binds the stores modules declare to its own: to the only one it
+// has for modules, or as the node definition says.
+func TestStores(t *testing.T) {
+	ctx := context.Background()
+	cfg := func(stores map[string]store.Config, bindings map[string]string) Config {
+		return Config{Name: "test", Network: NetworkConfig{MDNS: new(bool)}, Stores: stores, Modules: []ModuleConfig{{Name: "echo", Stores: bindings}}}
+	}
+	one := map[string]store.Config{"a": {Path: ":memory:"}}
+	two := map[string]store.Config{"a": {Path: ":memory:"}, "b": {Path: ":memory:"}}
+	for _, bad := range []struct {
+		cfg  Config
+		want string
+	}{
+		{cfg(one, nil), "isn't bound"}, // even with one store: bindings are explicit
+		{cfg(two, map[string]string{"notes": "c"}), "doesn't have"},
+		{cfg(one, map[string]string{"notes": "local"}), "the node's own"},
+		{cfg(one, map[string]string{"notes": "a", "other": "a"}), "doesn't declare"},
+	} {
+		if _, err := newNode(t, bad.cfg); err == nil || !strings.Contains(err.Error(), bad.want) {
+			t.Errorf("New with %+v: err = %v, want %q", bad.cfg.Modules[0].Stores, err, bad.want)
+		}
+	}
+	n, err := newNode(t, cfg(two, map[string]string{"notes": "b"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.Call(ctx, "echo.note", json.RawMessage(`{"id":"a","text":"bound","time":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	// The node's own parts keep their state in the local store.
+	if err := n.local("test").Put(ctx, "k", 1); err != nil {
+		t.Fatal(err)
+	}
+	var v int
+	if err := n.local("test").Get(ctx, "k", &v); err != nil || v != 1 {
+		t.Fatalf("local Get = %d, %v", v, err)
+	}
+}
+
+// newNode builds a node from cfg in client mode, without running it.
+func newNode(t *testing.T, cfg Config) (*Node, error) {
+	t.Helper()
+	key, _ := identity.Load("")
+	nw, err := network.New(network.Config{Key: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := New(cfg, key, nw, map[string]module.Factory{"echo": newEcho})
+	if n != nil {
+		t.Cleanup(n.close)
+	}
+	return n, err
+}
+
 // start runs a node with one module, listening on localhost, until the test
-// ends. It joins the network through bootstrap, if any.
-func start(t *testing.T, bootstrap []string, mc ModuleConfig) (*Node, string) {
+// ends. It joins the network through bootstrap, if any. opts change the
+// node definition first.
+func start(t *testing.T, bootstrap []string, mc ModuleConfig, opts ...func(*Config)) (*Node, string) {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -343,12 +402,19 @@ func start(t *testing.T, bootstrap []string, mc ModuleConfig) (*Node, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.OpenSQLite("")
-	if err != nil {
-		t.Fatal(err)
+	if mc.Stores == nil {
+		mc.Stores = map[string]string{"notes": "main"} // echo's store
 	}
-	t.Cleanup(func() { st.Close() })
-	n, err := New(Config{Name: "test", Network: NetworkConfig{Bootstrap: bootstrap, MDNS: new(bool)}, Modules: []ModuleConfig{mc}}, key, nw, st, map[string]module.Factory{"echo": newEcho})
+	cfg := Config{
+		Name:    "test",
+		Network: NetworkConfig{Bootstrap: bootstrap, MDNS: new(bool)},
+		Stores:  map[string]store.Config{"main": {Path: ":memory:"}},
+		Modules: []ModuleConfig{mc},
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	n, err := New(cfg, key, nw, map[string]module.Factory{"echo": newEcho})
 	if err != nil {
 		t.Fatal(err)
 	}

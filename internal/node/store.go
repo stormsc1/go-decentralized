@@ -17,13 +17,10 @@ import (
 //go:embed store.module.yaml
 var storeManifest []byte
 
-// localStore is the node's own store, for its built-in parts. Modules can't
-// bind to it, so a pool's nodes never share it.
+// localStore is the node's own store, for its built-in parts: the only store
+// a node definition needn't declare. Modules can't bind to it, so a pool's
+// nodes never share it.
 const localStore = "local"
-
-// defaultStore is the store a module's stores are bound to unless the node
-// definition says otherwise, when the node has several.
-const defaultStore = "default"
 
 // defaultLimit is how many records or pairs a query returns, unless it says.
 const defaultLimit = 100
@@ -34,10 +31,9 @@ type entityType struct {
 	indexes []string
 }
 
-// openStores opens the stores the node definition declares, and the ones
-// every node has: local, and default if modules have nothing else to bind
-// to. Undeclared ones are SQLite files in the data directory, named after
-// the node.
+// openStores opens the stores the node definition declares, and local,
+// which every node has. SQLite stores without a path are files in the data
+// directory, named after the node and the store.
 func (n *Node) openStores() error {
 	n.stores = map[string]store.Store{}
 	for name, cfg := range n.Config.Stores {
@@ -46,9 +42,6 @@ func (n *Node) openStores() error {
 		}
 		if cfg.Path == "" && (cfg.Driver == "" || cfg.Driver == "sqlite") {
 			cfg.Path = n.Config.Name + "." + name + ".db"
-			if name == defaultStore {
-				cfg.Path = n.Config.Name + ".db"
-			}
 		}
 		s, err := store.Open(cfg, n.Config.DataDir)
 		if err != nil {
@@ -63,19 +56,13 @@ func (n *Node) openStores() error {
 		}
 		n.stores[localStore] = s
 	}
-	if len(n.stores) == 1 {
-		s, err := store.Open(store.Config{Path: n.Config.Name + ".db"}, n.Config.DataDir)
-		if err != nil {
-			return fmt.Errorf("store %s: %w", defaultStore, err)
-		}
-		n.stores[defaultStore] = s
-	}
 	return nil
 }
 
-// bindStores binds the stores a module declares to the node's, checks each
-// keeps that kind of data, and prepares its entity types: their schemas
-// compiled and their indexes made. n.mu must be held.
+// bindStores binds the stores a module declares to the node's, as the node
+// definition says, checks each keeps that kind of data, and prepares its
+// entity types: their schemas compiled and their indexes made. n.mu must be
+// held.
 func (n *Node) bindStores(l *loaded) (map[string]entityType, error) {
 	m := l.manifest
 	l.stores = map[string]binding{}
@@ -83,9 +70,7 @@ func (n *Node) bindStores(l *loaded) (map[string]entityType, error) {
 	for _, ds := range m.Stores {
 		name, ok := l.bindings[ds.Name]
 		if !ok {
-			if name, ok = n.unboundStore(); !ok {
-				return nil, fmt.Errorf("%s: store %s isn't bound, and the node has several: bind it in the node definition", m.Name, ds.Name)
-			}
+			return nil, fmt.Errorf("%s: store %s isn't bound: bind it to one of the node's stores in the node definition", m.Name, ds.Name)
 		}
 		if name == localStore {
 			return nil, fmt.Errorf("%s: store %s is bound to %s, which is the node's own", m.Name, ds.Name, localStore)
@@ -121,24 +106,7 @@ func (n *Node) bindStores(l *loaded) (map[string]entityType, error) {
 	return entities, nil
 }
 
-// unboundStore returns the store for modules' stores the node definition
-// doesn't bind: the only one besides local, or default.
-func (n *Node) unboundStore() (string, bool) {
-	var only string
-	for name := range n.stores {
-		if name == localStore {
-			continue
-		}
-		if only != "" {
-			_, ok := n.stores[defaultStore]
-			return defaultStore, ok
-		}
-		only = name
-	}
-	return only, only != ""
-}
-
-// Local returns the node's own store, for its built-in parts, as pairs of
+// local returns the node's own store, for its built-in parts, as pairs of
 // Go values in the namespace ns.
 func (n *Node) local(ns string) store.Values {
 	kv, _ := store.KV(n.stores[localStore])

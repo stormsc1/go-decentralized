@@ -12,7 +12,6 @@ import (
 	"go-decentralized/internal/identity"
 	"go-decentralized/internal/network"
 	"go-decentralized/internal/node"
-	"go-decentralized/internal/store"
 )
 
 // TestTypeScriptGreeter runs the TypeScript greeter (examples/greeter-ts) as
@@ -73,12 +72,7 @@ func newNode(t *testing.T, cfg node.Config) *node.Node {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.OpenSQLite("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	n, err := node.New(cfg, key, nw, st, Factories)
+	n, err := node.New(cfg, key, nw, Factories) // no data directory: stores in memory
 	if err != nil {
 		t.Fatal(err)
 	}

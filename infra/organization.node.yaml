@@ -9,6 +9,10 @@ network:
     # Relays to stay reachable through if this node accepts no connections.
     via:
       - ${RELAY_VIA}
+# Stores for modules' data, by name. A module's block binds every store its
+# manifest declares to one of them: stores: {<its name for it>: <store>}.
+# stores:
+#   main: {driver: sqlite}
 modules:
   # Lets tools such as the network explorer (web/) inspect this node.
   - name: debug
