@@ -1,0 +1,322 @@
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --border: rgba(11, 11, 11, 0.1);
+  --link: rgba(137, 135, 129, 0.55);
+  --nat: rgba(137, 135, 129, 0.08);
+  --direct: #2a78d6;
+  --relayed: #eb6834;
+  --critical: #d03b3b;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --border: rgba(255, 255, 255, 0.1);
+    --direct: #3987e5;
+    --relayed: #d95926;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--page);
+  color: var(--text-primary);
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+h1 {
+  margin: 0;
+  font-size: 16px;
+}
+
+#status {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.key {
+  display: inline-block;
+}
+
+.key.direct,
+.key.relayed,
+.key.unreachable {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.key.direct {
+  background: var(--direct);
+}
+
+.key.relayed {
+  border: 2px solid var(--relayed);
+}
+
+.key.unreachable {
+  border: 2px solid var(--text-muted);
+}
+
+.key.knows,
+.key.lan,
+.key.relay-link,
+.key.active {
+  width: 16px;
+}
+
+.key.knows {
+  border-top: 1px solid var(--link);
+}
+
+.key.lan {
+  border-top: 2px dotted var(--link);
+}
+
+.key.active {
+  border-top: 3px solid var(--text-primary);
+}
+
+.key.relay-link {
+  border-top: 2px dashed var(--relayed);
+}
+
+.key.nat {
+  width: 14px;
+  height: 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--nat);
+}
+
+main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+#graph {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+}
+
+/* Keep the last render, dimmed, while the explorer can't crawl. */
+body.stale #graph {
+  opacity: 0.5;
+}
+
+aside {
+  width: 320px;
+  padding: 12px 16px;
+  overflow: auto;
+  border-left: 1px solid var(--border);
+  font-size: 13px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  padding: 4px 0;
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+td {
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+tbody tr {
+  cursor: pointer;
+}
+
+tbody tr[aria-selected="true"] {
+  font-weight: 600;
+}
+
+tbody tr.network {
+  cursor: default;
+}
+
+tbody tr.network th {
+  padding-top: 14px;
+}
+
+#details {
+  margin-top: 16px;
+}
+
+#details h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+#details dt {
+  margin-top: 8px;
+  color: var(--text-muted);
+}
+
+#details dd {
+  margin: 2px 0 0;
+}
+
+code {
+  font-size: 12px;
+  word-break: break-all;
+}
+
+/* The message log: every message and stream nodes send. */
+#log {
+  height: 36vh;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+#log .toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 16px;
+}
+
+#log h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+#filter {
+  width: 280px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+#log-count {
+  color: var(--text-muted);
+}
+
+#log .scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 16px 8px;
+}
+
+#log th {
+  position: sticky;
+  top: 0;
+  background: var(--page);
+}
+
+#log td,
+#log th {
+  padding: 3px 16px 3px 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+#log td.result {
+  max-width: 480px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#log tr.failed td.result {
+  color: var(--critical);
+}
+
+#tooltip {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 360px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+#tooltip[hidden] {
+  display: none;
+}
+
+#tooltip strong {
+  color: var(--text-primary);
+}
+
+@media (max-width: 720px) {
+  main {
+    flex-direction: column;
+  }
+
+  aside {
+    width: auto;
+    max-height: 40vh;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}

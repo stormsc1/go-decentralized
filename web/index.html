@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Network explorer</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Network explorer</h1>
+      <p id="status" role="status">Mapping…</p>
+      <ul class="legend">
+        <li><span class="key direct"></span>Direct</li>
+        <li><span class="key relayed"></span>Through a relay</li>
+        <li><span class="key unreachable"></span>Unreachable</li>
+        <li><span class="key knows"></span>In routing table</li>
+        <li><span class="key lan"></span>Same LAN</li>
+        <li><span class="key relay-link"></span>Relay reservation</li>
+        <li><span class="key active"></span>Carrying traffic</li>
+        <li><span class="key nat"></span>Behind the same NAT</li>
+      </ul>
+    </header>
+    <main>
+      <div id="graph"></div>
+      <aside>
+        <table>
+          <thead>
+            <tr><th>Node</th><th>Mode</th><th class="num">Knows</th></tr>
+          </thead>
+          <tbody id="nodes"></tbody>
+        </table>
+        <section id="details"></section>
+      </aside>
+    </main>
+    <section id="log">
+      <div class="toolbar">
+        <h2>Messages</h2>
+        <input id="filter" type="search" placeholder="Filter by node, message or error" aria-label="Filter messages" />
+        <label><input id="pause" type="checkbox" /> Pause</label>
+        <span id="log-count"></span>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th><th>From</th><th>To</th><th>Message</th><th>Via</th><th class="num">Took</th><th>Result</th>
+            </tr>
+          </thead>
+          <tbody id="messages"></tbody>
+        </table>
+      </div>
+    </section>
+    <div id="tooltip" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

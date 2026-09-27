@@ -1,0 +1,20 @@
+version: 1.0
+name: discovery
+description: Handles node discovery within the decentralized network.
+stores:
+  - name: routing_table
+capabilities:
+  - name: list_nodes
+    description: Lists the nodes this node knows, not the whole network (see debug.map_network).
+  - name: find_node_by_id
+    description: Finds the node with the given ID.
+    parameters:
+      - name: id
+        type: string
+        description: The node ID (hex).
+  - name: find_capability_providers
+    description: Finds all nodes that provide a specific capability.
+    parameters:
+      - name: capability
+        type: string
+        description: The capability to search for.

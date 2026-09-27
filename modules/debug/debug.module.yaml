@@ -1,0 +1,20 @@
+version: 1.0
+name: debug
+description: Reports on nodes, for debugging tools such as the network explorer.
+capabilities:
+  - name: report
+    description: Reports this node's addresses, modules and their state.
+  - name: map_network
+    description: Reports on every node running the debug module, found by capability. Sends a message to each.
+  - name: traffic
+    description: Lists the messages and streams sent by nodes running the debug module, oldest first.
+    parameters:
+      - name: since
+        type: string
+        description: Only list what was sent after this time (RFC 3339).
+  - name: ping_node
+    description: Pings the node with the given ID, through a relay if needed.
+    parameters:
+      - name: id
+        type: string
+        description: The node ID (hex).

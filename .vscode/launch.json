@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Stack (Tilt, hot reload)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "tilt up",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "CLI (home network)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "docker compose run --build --rm cli",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

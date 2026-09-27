@@ -1,0 +1,13 @@
+version: 1.0
+name: cli-node
+desc: Interactive terminal for triggering capabilities on the network
+modules:
+  - name: discovery
+    config:
+      # Any node already in the network; no node is special.
+      bootstrap:
+        - ${DISCOVERY_BOOTSTRAP}
+  # Lets the CLI reach nodes that are only reachable through relays.
+  - name: relay
+  # Diagnostics: map_network, ping_node.
+  - name: debug

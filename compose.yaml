@@ -1,0 +1,170 @@
+# Network lab: one node per organization, each on a different kind of
+# network, plus a relay. Each org also runs a node for each of its three
+# projects (project.node.yaml). Routers do real NAT, so nodes behind them can
+# connect out but accept no connections.
+#
+#   internet  203.0.113.0/24   SaaS provider: public addresses, inbound open,
+#                              port 443. Relay (.10), gl (.11) and gl's
+#                              projects (.12-.14).
+#   corp-lan  10.20.0.0/24     Corporate firewall: NAT, no inbound, outbound
+#                              only to port 443. kg and its projects, on one
+#                              host (ports 8080-8083).
+#   home-lan  192.168.50.0/24  Small office/home router: NAT, no inbound.
+#                              ks and its projects on one host, and the CLI.
+#
+# Nodes behind NAT learn they are unreachable (dial-back fails) and stay
+# reachable through the relay.
+#
+#   tilt up                          # or: docker compose up -d --build
+#   docker compose run --build --rm cli
+
+x-node: &node
+  build: .
+  image: go-decentralized/node:dev
+  volumes:
+    - ./infra:/etc/node:ro
+
+x-project: &project
+  <<: *node
+  command: ["-config", "/etc/node/project.node.yaml"]
+
+x-netlab: &netlab
+  build: infra/netlab
+  image: go-decentralized/netlab:dev
+  cap_add: [NET_ADMIN]
+
+# Nodes behind a NAT share their org host's network and join through the
+# relay.
+x-corp: &corp
+  network_mode: service:kg-host
+  depends_on: [kg-host]
+
+x-home: &home
+  network_mode: service:ks-host
+  depends_on: [ks-host]
+
+x-behind-nat: &behind-nat
+  DISCOVERY_BOOTSTRAP: 203.0.113.10:443
+  RELAY_VIA: 203.0.113.10:443
+
+services:
+  # SaaS provider
+  relay:
+    <<: *node
+    command: ["-config", "/etc/node/relay.node.yaml"]
+    environment:
+      NODE_LISTEN: :443
+    networks:
+      internet: { ipv4_address: 203.0.113.10 }
+
+  gl:
+    <<: *node
+    command: ["-config", "/etc/node/gl-organization.node.yaml"]
+    environment:
+      NODE_LISTEN: :443
+    networks:
+      internet: { ipv4_address: 203.0.113.11 }
+    ports: ["8443:443"] # API for the network explorer (web/)
+
+  gl-project-1:
+    <<: *project
+    environment: { ORG: gl, PROJECT: project-1, NODE_LISTEN: ":443" }
+    networks:
+      internet: { ipv4_address: 203.0.113.12 }
+
+  gl-project-2:
+    <<: *project
+    environment: { ORG: gl, PROJECT: project-2, NODE_LISTEN: ":443" }
+    networks:
+      internet: { ipv4_address: 203.0.113.13 }
+
+  gl-project-3:
+    <<: *project
+    environment: { ORG: gl, PROJECT: project-3, NODE_LISTEN: ":443" }
+    networks:
+      internet: { ipv4_address: 203.0.113.14 }
+
+  # Corporate network
+  corp-router:
+    <<: *netlab
+    command: ["router.sh", "10.20.0.0/24", "-p", "tcp", "--dport", "443"]
+    sysctls: { net.ipv4.ip_forward: 1 }
+    networks:
+      internet: { ipv4_address: 203.0.113.20 }
+      corp-lan: { ipv4_address: 10.20.0.254 }
+
+  kg-host:
+    <<: *netlab
+    command: ["host.sh", "10.20.0.254"]
+    networks:
+      corp-lan: { ipv4_address: 10.20.0.10 }
+
+  kg:
+    <<: [*node, *corp]
+    command: ["-config", "/etc/node/kg-organization.node.yaml"]
+    environment: *behind-nat
+
+  kg-project-1:
+    <<: [*project, *corp]
+    environment: { <<: *behind-nat, ORG: kg, PROJECT: project-1, NODE_LISTEN: ":8081" }
+
+  kg-project-2:
+    <<: [*project, *corp]
+    environment: { <<: *behind-nat, ORG: kg, PROJECT: project-2, NODE_LISTEN: ":8082" }
+
+  kg-project-3:
+    <<: [*project, *corp]
+    environment: { <<: *behind-nat, ORG: kg, PROJECT: project-3, NODE_LISTEN: ":8083" }
+
+  # Small office/home network
+  home-router:
+    <<: *netlab
+    command: ["router.sh", "192.168.50.0/24"]
+    sysctls: { net.ipv4.ip_forward: 1 }
+    networks:
+      internet: { ipv4_address: 203.0.113.30 }
+      home-lan: { ipv4_address: 192.168.50.254 }
+
+  ks-host:
+    <<: *netlab
+    command: ["host.sh", "192.168.50.254"]
+    networks:
+      home-lan: { ipv4_address: 192.168.50.10 }
+
+  ks:
+    <<: [*node, *home]
+    command: ["-config", "/etc/node/ks-organization.node.yaml"]
+    environment: *behind-nat
+
+  ks-project-1:
+    <<: [*project, *home]
+    environment: { <<: *behind-nat, ORG: ks, PROJECT: project-1, NODE_LISTEN: ":8081" }
+
+  ks-project-2:
+    <<: [*project, *home]
+    environment: { <<: *behind-nat, ORG: ks, PROJECT: project-2, NODE_LISTEN: ":8082" }
+
+  ks-project-3:
+    <<: [*project, *home]
+    environment: { <<: *behind-nat, ORG: ks, PROJECT: project-3, NODE_LISTEN: ":8083" }
+
+  # Interactive CLI on the home network, on the same machine as ks.
+  cli:
+    <<: [*node, *home]
+    entrypoint: ["/clinode"]
+    environment:
+      DISCOVERY_BOOTSTRAP: 203.0.113.10:443
+    stdin_open: true
+    tty: true
+    profiles: [cli]
+
+networks:
+  internet:
+    ipam:
+      config: [{ subnet: 203.0.113.0/24, ip_range: 203.0.113.128/25 }]
+  corp-lan:
+    ipam:
+      config: [{ subnet: 10.20.0.0/24 }]
+  home-lan:
+    ipam:
+      config: [{ subnet: 192.168.50.0/24 }]
