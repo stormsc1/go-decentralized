@@ -59,7 +59,7 @@ Modules reach the stores through built-in capabilities, like `node.*` and `routi
 **Open**
 - How SQL opt-in looks (a SQLite file per module, reached through a capability?), and whether stores have transactions.
 - Migrations when an entity type's schema changes.
-- How a node definition maps modules to backends, e.g. one module on the organisation's Postgres.
+- How a node definition maps modules to backends: now decided in [stores-pools-transport.md](stores-pools-transport.md).
 
 ## Chat
 
