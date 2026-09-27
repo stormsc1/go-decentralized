@@ -13,6 +13,11 @@ local tools. Progress and logs need streamed results, with flow control per
 call on process pipes, and modules may want each other's events. Large files
 need a transfer protocol of their own.
 
+## Revoking devices
+A person's root key delegates to device keys, which can't be revoked: a lost
+device acts for its person until its delegation expires. Fix: revocation
+lists the root signs, and a way to find them.
+
 ## Who may call what
 Any node may call any network capability, e.g. `debug.traces`, which shows
 who talks to whom. Process modules may call any of their node's

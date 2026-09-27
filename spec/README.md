@@ -9,6 +9,7 @@ Status: draft, version 1. Anything may change until it's frozen.
 | [wire.md](wire.md) | Identity, TLS, addresses, messages, calls and relays between nodes |
 | [modules.md](modules.md) | Manifests, capabilities, what nodes give modules, runtimes |
 | [routing.md](routing.md) | How nodes find each other: the DHT, and the local network |
+| [identity.md](identity.md) | DIDs for people and organisations, signed data and devices |
 | [module.schema.json](module.schema.json) | JSON Schema of `module.yaml` |
 
 ## Model
