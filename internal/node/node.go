@@ -17,6 +17,7 @@ import (
 
 	"go-decentralized/internal/network"
 	"go-decentralized/internal/routing"
+	"go-decentralized/internal/store"
 	"go-decentralized/module"
 )
 
@@ -29,12 +30,14 @@ type Node struct {
 	ID      string
 	Network *network.Network
 	routing *routing.Routing
+	store   store.Driver
 	key     ed25519.PrivateKey
 
 	// Process modules may call while later modules load.
-	mu      sync.RWMutex
-	modules []*loaded
-	caps    map[string]*capability // by ref
+	mu       sync.RWMutex
+	modules  []*loaded
+	caps     map[string]*capability // by ref
+	entities map[string]entityType  // by "<module>.<entity>"
 }
 
 // loaded is a module the node runs.
@@ -60,14 +63,16 @@ var nodeManifest []byte
 
 // New starts every module listed in cfg: native ones from factories, and
 // process ones by running their command. Calls from other nodes arrive
-// through nw.
-func New(cfg Config, key ed25519.PrivateKey, nw *network.Network, factories map[string]module.Factory) (_ *Node, err error) {
+// through nw, and modules keep their data in st.
+func New(cfg Config, key ed25519.PrivateKey, nw *network.Network, st store.Driver, factories map[string]module.Factory) (_ *Node, err error) {
 	n := &Node{
-		Config:  cfg,
-		ID:      module.NodeID(key.Public().(ed25519.PublicKey)),
-		Network: nw,
-		key:     key,
-		caps:    map[string]*capability{},
+		Config:   cfg,
+		ID:       module.NodeID(key.Public().(ed25519.PublicKey)),
+		Network:  nw,
+		store:    st,
+		key:      key,
+		caps:     map[string]*capability{},
+		entities: map[string]entityType{},
 	}
 	defer func() {
 		if err != nil {
@@ -92,6 +97,9 @@ func New(cfg Config, key ed25519.PrivateKey, nw *network.Network, factories map[
 		return nil, err
 	}
 	if err := n.add(&loaded{manifest: n.routing.Manifest(), runtime: "builtin"}, natives(n.routing.Handlers())); err != nil {
+		return nil, err
+	}
+	if err := n.add(&loaded{manifest: module.MustParseManifest(storeManifest), runtime: "builtin"}, natives(n.storeHandlers())); err != nil {
 		return nil, err
 	}
 	for _, mc := range cfg.Modules {
@@ -173,7 +181,21 @@ func (n *Node) add(l *loaded, handlers map[string]handler) error {
 		}
 		caps[m.Name+"."+c.Name] = &capability{module: l, spec: c, input: input, handle: h}
 	}
+	entities := map[string]entityType{}
+	for _, e := range m.Entities {
+		schema, err := compile(m, e.Schema)
+		if err != nil {
+			return fmt.Errorf("%s entity %s: schema: %w", m.Name, e.Name, err)
+		}
+		for _, field := range e.Indexes {
+			if err := n.store.Index(context.Background(), m.Name, e.Name, field); err != nil {
+				return fmt.Errorf("%s entity %s: index %s: %w", m.Name, e.Name, field, err)
+			}
+		}
+		entities[m.Name+"."+e.Name] = entityType{schema: schema, indexes: e.Indexes}
+	}
 	maps.Copy(n.caps, caps)
+	maps.Copy(n.entities, entities)
 	n.modules = append(n.modules, l)
 	return nil
 }

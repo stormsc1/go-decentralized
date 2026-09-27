@@ -11,6 +11,7 @@ import (
 	"go-decentralized/internal/identity"
 	"go-decentralized/internal/network"
 	"go-decentralized/internal/node"
+	"go-decentralized/internal/store"
 	"go-decentralized/modules"
 )
 
@@ -43,7 +44,13 @@ func main() {
 		slog.Error("start network", "err", err)
 		os.Exit(1)
 	}
-	n, err := node.New(cfg, key, nw, modules.Factories)
+	// The CLI keeps nothing between runs.
+	st, err := store.OpenSQLite("")
+	if err != nil {
+		slog.Error("open database", "err", err)
+		os.Exit(1)
+	}
+	n, err := node.New(cfg, key, nw, st, modules.Factories)
 	if err != nil {
 		slog.Error("build node", "err", err)
 		os.Exit(1)

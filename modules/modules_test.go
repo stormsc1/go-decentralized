@@ -12,6 +12,7 @@ import (
 	"go-decentralized/internal/identity"
 	"go-decentralized/internal/network"
 	"go-decentralized/internal/node"
+	"go-decentralized/internal/store"
 )
 
 // TestTypeScriptGreeter runs the TypeScript greeter (examples/greeter-ts) as
@@ -62,7 +63,12 @@ func newNode(t *testing.T, cfg node.Config) *node.Node {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := node.New(cfg, key, nw, Factories)
+	st, err := store.OpenSQLite("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	n, err := node.New(cfg, key, nw, st, Factories)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +91,8 @@ modules:
 		t.Fatal(err)
 	}
 	n := newNode(t, cfg)
-	if got := len(n.Info().Modules); got != 3+len(Factories) {
-		t.Fatalf("node runs %d modules, want the 3 built in plus %d", got, len(Factories))
+	if got := len(n.Info().Modules); got != 4+len(Factories) {
+		t.Fatalf("node runs %d modules, want the 4 built in plus %d", got, len(Factories))
 	}
 	result, err := n.Call(context.Background(), "greeter.hello", json.RawMessage(`{"name": "you"}`))
 	if err != nil {

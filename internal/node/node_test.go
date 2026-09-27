@@ -10,6 +10,7 @@ import (
 
 	"go-decentralized/internal/identity"
 	"go-decentralized/internal/network"
+	"go-decentralized/internal/store"
 	"go-decentralized/module"
 )
 
@@ -32,6 +33,18 @@ capabilities:
     output: {type: object, properties: {sum: {type: integer}}}
   - name: node_name
     output: {type: object, properties: {name: {type: string}}}
+  - name: note
+    description: Keeps a note, in the node's store.
+    input: {type: object}
+  - name: notes
+    description: Lists the notes, newest first.
+entities:
+  - name: note
+    schema:
+      type: object
+      required: [text, time]
+      properties: {text: {type: string}, time: {type: integer}}
+    indexes: [time]
 `))
 
 func newEcho(_ func(any) error, env module.Env) (module.Module, error) { return echo{env}, nil }
@@ -50,6 +63,16 @@ func (e echo) Handlers() map[string]module.Handler {
 			var info module.NodeInfo
 			err := e.env.Call(ctx, "node.info", nil, &info)
 			return map[string]string{"name": info.Name}, err
+		}),
+		"note": module.HandlerFor(func(ctx context.Context, in map[string]any) (struct{}, error) {
+			id, _ := in["id"].(string)
+			delete(in, "id")
+			return struct{}{}, e.env.Entities("note").Put(ctx, id, in)
+		}),
+		"notes": module.HandlerFor(func(ctx context.Context, _ struct{}) (map[string]any, error) {
+			var notes []map[string]any
+			err := e.env.Entities("note").Query(ctx, module.Query{OrderBy: "time", Desc: true}, &notes)
+			return map[string]any{"notes": notes}, err
 		}),
 	}
 }
@@ -122,6 +145,24 @@ func testModule(t *testing.T, ctx context.Context, caller, callee *Node, calleeA
 	if err := call(callee.Call(ctx, "echo.missing", nil)); module.Code(err) != module.CodeUnimplemented {
 		t.Fatalf("call to a missing capability: err = %v", err)
 	}
+
+	// The module keeps records in its node's store, checked against its
+	// entity type's schema; tools can't reach them.
+	for _, note := range []string{`{"id":"a","text":"first","time":1}`, `{"id":"b","text":"second","time":2}`} {
+		if _, err := callee.Call(ctx, "echo.note", json.RawMessage(note)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := callee.Call(ctx, "echo.note", json.RawMessage(`{"id":"c","text":3,"time":3}`)); module.Code(err) != module.CodeInvalidArgument {
+		t.Fatalf("storing a record its schema rejects: err = %v", err)
+	}
+	result, err := callee.Call(ctx, "echo.notes", nil)
+	if err != nil || string(result) != `{"notes":[{"text":"second","time":2},{"text":"first","time":1}]}` {
+		t.Fatalf("notes = %s, %v", result, err)
+	}
+	if _, err := callee.Call(ctx, "store.kv_put", json.RawMessage(`{"key":"k","value":1}`)); module.Code(err) != module.CodePermissionDenied {
+		t.Fatalf("a tool used a module's store: err = %v", err)
+	}
 }
 
 // A node calling another by ID alone finds it through routing: here, over the
@@ -155,7 +196,12 @@ func start(t *testing.T, bootstrap []string, mc ModuleConfig) (*Node, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := New(Config{Name: "test", Network: NetworkConfig{Bootstrap: bootstrap, MDNS: new(bool)}, Modules: []ModuleConfig{mc}}, key, nw, map[string]module.Factory{"echo": newEcho})
+	st, err := store.OpenSQLite("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	n, err := New(Config{Name: "test", Network: NetworkConfig{Bootstrap: bootstrap, MDNS: new(bool)}, Modules: []ModuleConfig{mc}}, key, nw, st, map[string]module.Factory{"echo": newEcho})
 	if err != nil {
 		t.Fatal(err)
 	}

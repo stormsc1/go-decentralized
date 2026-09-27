@@ -16,9 +16,22 @@ type Manifest struct {
 	Version      string       `yaml:"version" json:"version"`
 	Description  string       `yaml:"description" json:"description,omitempty"`
 	Capabilities []Capability `yaml:"capabilities" json:"capabilities"`
-	// Defs are schemas the capabilities' schemas refer to, as
-	// "#/$defs/<name>".
+	// Entities are the types of records the module keeps in its node's
+	// store.
+	Entities []Entity `yaml:"entities" json:"entities,omitempty"`
+	// Defs are schemas the other schemas refer to, as "#/$defs/<name>".
 	Defs map[string]any `yaml:"$defs" json:"$defs,omitempty"`
+}
+
+// Entity is a type of record a module keeps in its node's store.
+type Entity struct {
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description" json:"description,omitempty"`
+	// Schema is the JSON Schema of the records, which are objects.
+	Schema map[string]any `yaml:"schema" json:"schema,omitempty"`
+	// Indexes are the top-level fields records can be queried and sorted
+	// by, besides their ID.
+	Indexes []string `yaml:"indexes" json:"indexes,omitempty"`
 }
 
 // Capability is something a module does for callers.
@@ -47,7 +60,10 @@ const (
 	Network Access = "network"
 )
 
-var name = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+var (
+	name  = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	field = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+)
 
 // ParseManifest parses a module.yaml.
 func ParseManifest(data []byte) (Manifest, error) {
@@ -84,12 +100,43 @@ func (m Manifest) Validate() error {
 			return fmt.Errorf("manifest %s: %s: access must be local or network", m.Name, c.Name)
 		}
 		for _, s := range []map[string]any{c.Input, c.Output} {
-			if s != nil && s["$ref"] == nil && s["type"] != "object" {
+			if !object(s) {
 				return fmt.Errorf("manifest %s: %s: inputs and outputs must be objects", m.Name, c.Name)
 			}
 		}
 	}
+	seen = map[string]bool{}
+	for _, e := range m.Entities {
+		if !name.MatchString(e.Name) || seen[e.Name] {
+			return fmt.Errorf("manifest %s: invalid or repeated entity name %q", m.Name, e.Name)
+		}
+		seen[e.Name] = true
+		if !object(e.Schema) {
+			return fmt.Errorf("manifest %s: entity %s: records must be objects", m.Name, e.Name)
+		}
+		for _, f := range e.Indexes {
+			if !field.MatchString(f) {
+				return fmt.Errorf("manifest %s: entity %s: invalid index %q", m.Name, e.Name, f)
+			}
+		}
+	}
 	return nil
+}
+
+// object reports whether a schema describes objects, as inputs, outputs and
+// records must be. An unset schema means any object.
+func object(s map[string]any) bool {
+	return s == nil || s["$ref"] != nil || s["type"] == "object"
+}
+
+// Entity returns the entity type called name.
+func (m Manifest) Entity(name string) (Entity, bool) {
+	for _, e := range m.Entities {
+		if e.Name == name {
+			return e, true
+		}
+	}
+	return Entity{}, false
 }
 
 // Capability returns the capability called name.

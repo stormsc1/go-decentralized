@@ -1,0 +1,101 @@
+# yaml-language-server: $schema=../../spec/module.schema.json
+name: store
+version: 1.0.0
+description: Keeps the calling module's records and key-value pairs on this node. Built into nodes, for modules. See spec/modules.md, "Storage".
+capabilities:
+  - name: put
+    description: Stores a record of one of the module's entity types, replacing any with the same ID.
+    internal: true
+    input:
+      type: object
+      required: [entity, id, record]
+      properties:
+        entity: {type: string}
+        id: {$ref: "#/$defs/id"}
+        record: {type: object, description: "Checked against the entity type's schema."}
+  - name: get
+    description: Returns a record by ID.
+    internal: true
+    input: {$ref: "#/$defs/record_ref"}
+    output:
+      type: object
+      properties:
+        record: {type: object}
+  - name: delete
+    description: Deletes a record by ID, if there is one.
+    internal: true
+    input: {$ref: "#/$defs/record_ref"}
+  - name: query
+    description: Returns the records that match, by their indexed fields.
+    internal: true
+    input:
+      type: object
+      required: [entity]
+      properties:
+        entity: {type: string}
+        where:
+          type: object
+          description: 'Indexed fields, or id, and the value each must have, or conditions: {"gt": v}, {"gte": v}, {"lt": v}, {"lte": v}.'
+        order_by: {type: string, description: An indexed field, or id, the default. Ties sort by id.}
+        desc: {type: boolean}
+        limit: {type: integer, minimum: 1, maximum: 1000, description: Defaults to 100.}
+    output:
+      type: object
+      properties:
+        records: {type: array, items: {type: object}}
+  - name: kv_get
+    description: Returns the value of a key.
+    internal: true
+    input:
+      type: object
+      required: [key]
+      properties:
+        key: {$ref: "#/$defs/key"}
+    output:
+      type: object
+      properties:
+        value: {description: Any JSON value.}
+  - name: kv_put
+    description: Sets the value of a key.
+    internal: true
+    input:
+      type: object
+      required: [key, value]
+      properties:
+        key: {$ref: "#/$defs/key"}
+        value: {description: Any JSON value.}
+  - name: kv_delete
+    description: Deletes a key, if it's there.
+    internal: true
+    input:
+      type: object
+      required: [key]
+      properties:
+        key: {$ref: "#/$defs/key"}
+  - name: kv_list
+    description: Lists the keys starting with prefix, and their values, by key.
+    internal: true
+    input:
+      type: object
+      properties:
+        prefix: {type: string}
+        limit: {type: integer, minimum: 1, maximum: 1000, description: Defaults to 100.}
+    output:
+      type: object
+      properties:
+        pairs:
+          type: array
+          items:
+            type: object
+            properties:
+              key: {type: string}
+              value: {description: Any JSON value.}
+$defs:
+  id: {type: string, minLength: 1, maxLength: 256}
+  key: {type: string, minLength: 1, maxLength: 512}
+  record_ref:
+    type: object
+    required: [entity, id]
+    properties:
+      entity: {type: string}
+      id: {$ref: "#/$defs/id"}

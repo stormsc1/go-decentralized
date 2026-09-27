@@ -19,6 +19,12 @@ capabilities:
       properties:
         name: {type: string}
     output: {$ref: "#/$defs/greeting"}   # schema of the result
+entities:                  # types of records the node keeps for the module
+  - name: visit            # [a-z][a-z0-9_]*, unique in the module
+    schema:                # schema of a record
+      type: object
+      properties: {name: {type: string}, time: {type: integer}}
+    indexes: [time]        # fields queries select and sort by
 $defs:                     # schemas others refer to, as #/$defs/<name>
   greeting: {type: object, properties: {greeting: {type: string}}}
 ```
@@ -26,7 +32,7 @@ $defs:                     # schemas others refer to, as #/$defs/<name>
 - Schemas are JSON Schema 2020-12. Inputs and results are objects; an unset schema means any object. Byte strings are `{type: string, contentEncoding: base64}`.
 - `local` capabilities are for the node itself: its modules and its local tools. `network` ones are for other nodes too.
 - `internal: true` marks capabilities of a protocol between modules, such as the DHT's. Nodes don't announce them and tools don't list them. Access still applies.
-- The names `node`, `network` and `module` are reserved.
+- The names `module` and those of the node's own modules, `node`, `network`, `routing` and `store`, are reserved.
 
 ## Calls
 
@@ -50,6 +56,15 @@ Nodes have capabilities of their own, for their modules and tools. Schemas: `int
 | `node.sign` | local, internal | Signs data with the node's key, see "Signing". |
 | `node.traces` | local, internal | Lists the calls the node made, for debugging. |
 | `node.inspect` | local, internal | Reports the state of the node's network and modules, for debugging. |
+
+## Storage
+
+Nodes keep data for their modules, each module's apart from the others'. Its drivers are compiled into the node; the first is SQLite. Modules reach their data through the `store` capabilities (schemas: `internal/node/store.module.yaml`), which only modules can call, and only for their own data:
+
+- Records of the entity types in their manifest: `store.put`, `get`, `delete` and `query`. A record is a JSON object with an ID, up to 256 characters, and the node rejects records that don't match their type's schema with `invalid_argument`. Queries select and sort by indexed fields and the ID, and return up to 100 records unless they say, at most 1000.
+- Key-value pairs, of any JSON value: `store.kv_get`, `kv_put`, `kv_delete` and `kv_list`, which lists keys by prefix.
+
+`get` and `kv_get` fail with `not_found` if there's nothing there. Go's API is `Env.Entities` and `Env.KV`.
 
 ## Signing
 

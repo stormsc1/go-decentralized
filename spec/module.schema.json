@@ -22,6 +22,11 @@
       "type": "array",
       "items": { "$ref": "#/$defs/capability" }
     },
+    "entities": {
+      "type": "array",
+      "description": "The types of records the module keeps in its node's store.",
+      "items": { "$ref": "#/$defs/entity" }
+    },
     "$defs": {
       "type": "object",
       "description": "Schemas the capabilities' schemas refer to, as #/$defs/<name>.",
@@ -60,6 +65,28 @@
         "output": {
           "$ref": "#/$defs/schema",
           "description": "JSON Schema of the call's result. Unset means any object."
+        }
+      }
+    },
+    "entity": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Unique in the module."
+        },
+        "description": { "type": "string" },
+        "schema": {
+          "$ref": "#/$defs/schema",
+          "description": "JSON Schema of the records. Unset means any object."
+        },
+        "indexes": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+          "description": "Top-level fields records can be queried and sorted by, besides their ID."
         }
       }
     },
