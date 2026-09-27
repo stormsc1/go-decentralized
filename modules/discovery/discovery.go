@@ -24,9 +24,11 @@ type Config struct {
 	// MDNS advertises this node and finds bootstrap nodes on the local
 	// network. Defaults to true.
 	MDNS bool `yaml:"mdns"`
-	// Refresh is how often the routing table is refreshed and capabilities
-	// re-announced. Defaults to 1m.
+	// Refresh is how often the routing table is refreshed. Defaults to 1m.
 	Refresh time.Duration `yaml:"refresh"`
+	// Republish is how often this node's record and capabilities are
+	// re-announced. Records live for 3x Republish. Defaults to 10m.
+	Republish time.Duration `yaml:"republish"`
 }
 
 type Module struct {
@@ -41,7 +43,7 @@ type Module struct {
 }
 
 func New(decode func(any) error, env module.Env) (module.Module, error) {
-	cfg := Config{MDNS: true, Refresh: time.Minute}
+	cfg := Config{MDNS: true, Refresh: time.Minute, Republish: 10 * time.Minute}
 	if err := decode(&cfg); err != nil {
 		return nil, err
 	}
@@ -61,6 +63,7 @@ func New(decode func(any) error, env module.Env) (module.Module, error) {
 		},
 		Bootstrap: m.bootstrap,
 		Refresh:   cfg.Refresh,
+		Republish: cfg.Republish,
 		Provides:  env.Registry.Refs,
 	})
 	return m, nil

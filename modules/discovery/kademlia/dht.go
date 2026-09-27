@@ -33,9 +33,11 @@ type Config struct {
 	// Bootstrap returns addresses (host:port) of nodes to join the network
 	// through. It is called whenever the routing table is empty.
 	Bootstrap func(ctx context.Context) []string
-	// Refresh is how often the node refreshes its routing table and
-	// re-announces its record. Records live for 3x Refresh.
+	// Refresh is how often the node refreshes its routing table.
 	Refresh time.Duration
+	// Republish is how often the node re-announces its record and what it
+	// provides. Records live for 3x Republish.
+	Republish time.Duration
 	// Provides returns the keys (capability refs) this node announces.
 	Provides func() []string
 }
@@ -53,7 +55,7 @@ func New(cfg Config) *DHT {
 		cfg:       cfg,
 		id:        id,
 		table:     NewTable(id),
-		providers: newProviders(3 * cfg.Refresh),
+		providers: newProviders(3 * cfg.Republish),
 	}
 }
 
@@ -68,19 +70,25 @@ func (d *DHT) record() Record {
 }
 
 // Run keeps the node joined to the network until ctx is done. It refreshes
-// every Refresh, and straight away when the table is empty or this node's
-// addresses change, so peers learn new addresses quickly.
+// the routing table every Refresh and republishes every Republish, and does
+// both straight away when it joins or this node's addresses change, so peers
+// learn new addresses quickly.
 func (d *DHT) Run(ctx context.Context) {
-	var last time.Time
-	var lastAddrs []string
+	var refreshed, announced time.Time
+	var announcedAddrs []string
 	for {
 		addrs := d.cfg.Addrs()
-		if d.table.Len() == 0 || time.Since(last) >= d.cfg.Refresh || !slices.Equal(addrs, lastAddrs) {
+		changed := !slices.Equal(addrs, announcedAddrs)
+		if d.table.Len() == 0 || changed || time.Since(refreshed) >= d.cfg.Refresh {
 			if err := d.refresh(ctx); err != nil {
 				slog.Warn("discovery: refresh failed", "err", err)
 			} else {
-				last, lastAddrs = time.Now(), addrs
+				refreshed = time.Now()
 			}
+		}
+		if d.table.Len() > 0 && (changed || time.Since(announced) >= d.cfg.Republish) {
+			d.announce(ctx)
+			announced, announcedAddrs = time.Now(), addrs
 		}
 		select {
 		case <-ctx.Done():
@@ -158,8 +166,8 @@ func (d *DHT) ensureJoined(ctx context.Context) error {
 	return d.refresh(ctx)
 }
 
-// refresh joins via the bootstrap nodes if needed, looks up our own ID to
-// fill the routing table, and re-announces our record.
+// refresh joins via the bootstrap nodes if needed and looks up our own ID
+// to fill the routing table.
 func (d *DHT) refresh(ctx context.Context) error {
 	if d.table.Len() == 0 {
 		for _, addr := range d.cfg.Bootstrap(ctx) {
@@ -172,7 +180,6 @@ func (d *DHT) refresh(ctx context.Context) error {
 		}
 	}
 	d.lookup(ctx, d.id, msgFindNode)
-	d.announce(ctx)
 	return nil
 }
 
