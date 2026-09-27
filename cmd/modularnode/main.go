@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -23,7 +24,7 @@ func main() {
 	configPath := flag.String("config", envOr("NODE_CONFIG", "infra/gl-organization.node.yaml"), "path to the node definition")
 	listen := flag.String("listen", envOr("NODE_LISTEN", ":8080"), "address other nodes connect to, over TLS")
 	apiAddr := flag.String("api", envOr("NODE_API", ""), "address to serve the local HTTP API on, e.g. for the network explorer (default: none)")
-	keyPath := flag.String("key", envOr("NODE_KEY", ""), "path to the node key, created if missing (default: a new key per run)")
+	keyPath := flag.String("key", envOr("NODE_KEY", ""), "path to the node key, created if missing (default: go-decentralized/<node name>.key in the user's config directory)")
 	private := flag.Bool("private", os.Getenv("NODE_PRIVATE") == "true", "count private and loopback addresses as reachable, for networks without public addresses (e.g. local development)")
 	flag.Parse()
 
@@ -32,6 +33,13 @@ func main() {
 	cfg, err := node.LoadConfig(*configPath)
 	if err != nil {
 		fatal("load config", err)
+	}
+	if *keyPath == "" {
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			fatal("find key directory", err)
+		}
+		*keyPath = filepath.Join(dir, "go-decentralized", cfg.Name+".key")
 	}
 	key, err := identity.Load(*keyPath)
 	if err != nil {

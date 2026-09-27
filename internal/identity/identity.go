@@ -9,10 +9,11 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 )
 
-// Load reads the node key stored at path, creating it if it does not exist.
-// An empty path returns a fresh key that is not saved.
+// Load reads the node key stored at path, creating it, and its directory, if
+// it does not exist. An empty path returns a fresh key that is not saved.
 func Load(path string) (ed25519.PrivateKey, error) {
 	if path == "" {
 		_, key, err := ed25519.GenerateKey(rand.Reader)
@@ -22,6 +23,9 @@ func Load(path string) (ed25519.PrivateKey, error) {
 	if errors.Is(err, fs.ErrNotExist) {
 		_, key, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
+			return nil, err
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return nil, err
 		}
 		return key, os.WriteFile(path, key.Seed(), 0o600)

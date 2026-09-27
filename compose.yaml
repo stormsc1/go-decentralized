@@ -23,6 +23,7 @@ x-node: &node
   image: go-decentralized/node:dev
   volumes:
     - ./infra:/etc/node:ro
+    - keys:/home/nonroot # node keys, by node name, so IDs survive restarts
 
 x-project: &project
   <<: *node
@@ -158,6 +159,9 @@ services:
     stdin_open: true
     tty: true
     profiles: [cli]
+
+volumes:
+  keys: {}
 
 networks:
   internet:
