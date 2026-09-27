@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"net"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -87,6 +88,40 @@ func TestCallProvesBothEnds(t *testing.T) {
 	traces := a.Traces(time.Time{})
 	if len(traces) != 2 || traces[0].To != b.id || traces[0].Error != "" || traces[1].Error == "" {
 		t.Fatalf("traces = %+v", traces)
+	}
+}
+
+// Behind a platform that ends TLS itself, such as Cloud Run, a node listens
+// in plain HTTP; sessions still prove both ends and encrypt, and dial-backs
+// find it at ws://.
+func TestPlaintextListener(t *testing.T) {
+	ctx := context.Background()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	_, key, _ := ed25519.GenerateKey(nil)
+	plain, err := New(Config{Key: key, ListenPort: l.Addr().(*net.TCPAddr).Port, Plaintext: true, Private: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain.SetHandler(testNetwork(t, 0, RelayConfig{}).handler) // the test handlers
+	go plain.serve(l)
+	caller, _ := listening(t, RelayConfig{})
+
+	addr := "ws://" + l.Addr().String()
+	seen, err := whoami(ctx, caller, Peer{ID: plain.id, Addrs: []string{addr}})
+	if err != nil || seen != caller.id {
+		t.Fatalf("whoami over ws:// = %.8s, %v; want %.8s", seen, err, caller.id)
+	}
+	// A fresh caller, since calls to the same node reuse its session.
+	stranger, _ := listening(t, RelayConfig{})
+	if _, err := whoami(ctx, stranger, Peer{ID: plain.id, Addrs: []string{"wss://" + l.Addr().String()}}); err == nil {
+		t.Fatal("reached a plaintext listener over wss://")
+	}
+	if !plain.checkReachability(ctx, []Peer{{ID: caller.id}}) || !slices.Equal(plain.DirectAddrs(), []string{addr}) {
+		t.Fatalf("plaintext node's addresses: %v, want [%s]", plain.DirectAddrs(), addr)
 	}
 }
 
