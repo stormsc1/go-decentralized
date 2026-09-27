@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"go-decentralized/internal/identity"
-	"go-decentralized/internal/module"
 	"go-decentralized/internal/network"
 	"go-decentralized/internal/node"
 	"go-decentralized/modules"
@@ -39,8 +38,12 @@ func main() {
 		os.Exit(1)
 	}
 	// The CLI accepts no connections, so it runs in client mode.
-	env := module.Env{NodeID: identity.NodeID(key), Key: key, Network: network.New(network.Config{ID: identity.NodeID(key)})}
-	n, err := node.New(cfg, env, modules.Factories)
+	nw, err := network.New(network.Config{Key: key, Relay: cfg.Network.Relay})
+	if err != nil {
+		slog.Error("start network", "err", err)
+		os.Exit(1)
+	}
+	n, err := node.New(cfg, key, nw, modules.Factories)
 	if err != nil {
 		slog.Error("build node", "err", err)
 		os.Exit(1)

@@ -1,12 +1,17 @@
 # TODO
 
-## Relay traffic is not encrypted or authenticated
-Nodes talk plain HTTP, also through relays, so a relay can read and alter
-what it relays. Reservations aren't authenticated either: a node can reserve
-under another node's ID and receive its traffic.
+## Relays aren't verified
+A relay address names the node behind the relay, not the relay, so a caller
+can't tell a relay from an impostor at its address. End-to-end TLS keeps an
+impostor from reading or altering traffic, but it could drop it.
 
-Fix: mutual TLS keyed by the node keys, end to end through relays. Relays
-then only see ciphertext, and only the owner of an ID can reserve it.
+Fix: put the relay's ID in relay addresses, and verify it too.
+
+## Connections aren't reused
+Every message opens a new connection and TLS handshake, twice over for
+relayed ones. Fine for discovery, but it adds up for busy traffic.
+
+Fix: keep connections to peers open and multiplex messages over them.
 
 ## Peers on the same LAN
 Nodes find their LAN peers via mDNS and reach them directly when looking

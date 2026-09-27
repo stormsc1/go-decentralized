@@ -37,6 +37,11 @@ func Load(path string) (ed25519.PrivateKey, error) {
 
 // NodeID derives a node's ID from its key: hex(sha256(public key)).
 func NodeID(key ed25519.PrivateKey) string {
-	sum := sha256.Sum256(key.Public().(ed25519.PublicKey))
+	return IDOf(key.Public().(ed25519.PublicKey))
+}
+
+// IDOf is the ID of the node with the given public key.
+func IDOf(pub ed25519.PublicKey) string {
+	sum := sha256.Sum256(pub)
 	return hex.EncodeToString(sum[:])
 }

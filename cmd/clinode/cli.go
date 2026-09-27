@@ -14,8 +14,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"go-decentralized/internal/api"
 	"go-decentralized/internal/module"
-	"go-decentralized/internal/network"
 	"go-decentralized/internal/node"
 	"go-decentralized/modules/debug"
 	"go-decentralized/modules/discovery/kademlia"
@@ -94,7 +94,7 @@ func printResult(result any) {
 		}
 		tw.Flush()
 		fmt.Printf("%d node(s)\n", len(r))
-	case []network.Trace:
+	case []api.Trace:
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "TIME\tMESSAGE\tFROM\tTO\tADDRESS\tTOOK\tERROR")
 		for _, t := range r {

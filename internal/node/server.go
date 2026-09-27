@@ -7,21 +7,16 @@ import (
 
 	"go-decentralized/internal/api"
 	"go-decentralized/internal/module"
-	"go-decentralized/internal/network"
 )
 
-// Handler exposes the node over HTTP:
+// Handler is the node's local HTTP API, e.g. for the network explorer. Other
+// nodes don't use it: they talk to the network, over TLS.
 //
 //	GET  /healthz                 liveness/readiness
 //	GET  /v1/info                 node description (api.NodeInfo)
 //	POST /v1/capabilities/{ref}   invoke "<module>.<capability>" with JSON args
-//	POST /v1/messages/{name}      messages from other nodes (see network)
-//	POST /v1/streams/{name}       streams from other nodes (see network)
 func (n *Node) Handler() http.Handler {
 	mux := http.NewServeMux()
-	peers := n.Env.Network.Handler()
-	mux.Handle(network.MessagesPath, peers)
-	mux.Handle(network.StreamsPath, peers)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

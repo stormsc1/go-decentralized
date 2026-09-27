@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"go-decentralized/internal/api"
 	"go-decentralized/internal/module"
-	"go-decentralized/internal/network"
 	"go-decentralized/modules/discovery/capabilities"
 	"go-decentralized/modules/discovery/kademlia"
 )
@@ -33,7 +33,7 @@ type Module struct {
 	cfg  Config
 	id   kademlia.ID
 	name string
-	net  *network.Network
+	net  module.NetworkInfo
 	dht  *kademlia.DHT
 
 	mu  sync.Mutex
@@ -56,10 +56,12 @@ func New(decode func(any) error, env module.Env) (module.Module, error) {
 		Name:        env.NodeName,
 		Addrs:       env.Network.Addrs,
 		DirectAddrs: env.Network.DirectAddrs,
-		Messenger:   env.Network,
-		Bootstrap:   m.bootstrap,
-		Refresh:     cfg.Refresh,
-		Provides:    env.Registry.Refs,
+		Send: func(ctx context.Context, to api.Peer, name string, req, resp any) error {
+			return env.Send(ctx, to, Name+"."+name, req, resp)
+		},
+		Bootstrap: m.bootstrap,
+		Refresh:   cfg.Refresh,
+		Provides:  env.Registry.Refs,
 	})
 	return m, nil
 }
@@ -73,6 +75,9 @@ func (m *Module) Capabilities() []module.Capability {
 		&capabilities.FindCapabilityProviders{DHT: m.dht},
 	}
 }
+
+// Messages are the DHT's messages between nodes.
+func (m *Module) Messages() map[string]module.Handler { return m.dht.Handlers() }
 
 // Inspect reports the routing table and LAN peers, for the debug module.
 func (m *Module) Inspect() any {
@@ -92,7 +97,6 @@ func (m *Module) Run(ctx context.Context) {
 		}
 	}
 	var wg sync.WaitGroup
-	wg.Go(func() { m.net.Run(ctx, m.peers) })
 	wg.Go(func() { m.dht.Run(ctx) })
 	if m.cfg.MDNS {
 		wg.Go(func() { m.watchLAN(ctx) })
@@ -111,20 +115,20 @@ func (m *Module) bootstrap(ctx context.Context) []string {
 	return addrs
 }
 
-// peers returns addresses of nodes to ask for dial-backs: routing table
-// contacts, which are servers outside any NAT and so see this node's public
-// address. Until the table fills, e.g. because no node is known to be
+// Peers returns nodes for the node to check its reachability with: routing
+// table contacts, which are servers outside any NAT and so see this node's
+// public address. Until the table fills, e.g. because no node is known to be
 // reachable yet, it falls back to the bootstrap nodes.
-func (m *Module) peers(ctx context.Context) [][]string {
-	var peers [][]string
+func (m *Module) Peers(ctx context.Context) []api.Peer {
+	var peers []api.Peer
 	for _, c := range m.dht.Known() {
-		peers = append(peers, c.Addrs)
+		peers = append(peers, api.Peer{ID: c.ID.String(), Addrs: c.Addrs})
 	}
 	if len(peers) > 0 {
 		return peers
 	}
 	for _, addr := range m.bootstrap(ctx) {
-		peers = append(peers, []string{addr})
+		peers = append(peers, api.Peer{Addrs: []string{addr}})
 	}
 	return peers
 }

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"go-decentralized/internal/network"
 )
 
 // Config is a node definition, e.g. infra/gl-organization.node.yaml.
@@ -14,7 +16,13 @@ type Config struct {
 	Version string         `yaml:"version"`
 	Name    string         `yaml:"name"`
 	Desc    string         `yaml:"desc"`
+	Network NetworkConfig  `yaml:"network"`
 	Modules []ModuleConfig `yaml:"modules"`
+}
+
+// NetworkConfig configures the node's transport.
+type NetworkConfig struct {
+	Relay network.RelayConfig `yaml:"relay"`
 }
 
 // ModuleConfig names a module to load; Config is decoded by the module itself.

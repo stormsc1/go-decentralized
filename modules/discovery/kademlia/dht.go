@@ -9,7 +9,8 @@ import (
 	"slices"
 	"time"
 
-	"go-decentralized/internal/network"
+	"go-decentralized/internal/api"
+	"go-decentralized/internal/module"
 )
 
 // alpha is the number of messages a lookup keeps in flight at once.
@@ -27,8 +28,8 @@ type Config struct {
 	// Without any, the node runs in client mode: it isn't added to routing
 	// tables, but can still be found through its record.
 	DirectAddrs func() []string
-	// Messenger carries the DHT messages.
-	Messenger network.Messenger
+	// Send carries the DHT's messages, named as in Handlers.
+	Send module.SendFunc
 	// Bootstrap returns addresses (host:port) of nodes to join the network
 	// through. It is called whenever the routing table is empty.
 	Bootstrap func(ctx context.Context) []string
@@ -48,14 +49,12 @@ type DHT struct {
 
 func New(cfg Config) *DHT {
 	id := keyID(cfg.Key.Public().(ed25519.PublicKey))
-	d := &DHT{
+	return &DHT{
 		cfg:       cfg,
 		id:        id,
 		table:     NewTable(id),
 		providers: newProviders(3 * cfg.Refresh),
 	}
-	d.registerHandlers()
-	return d
 }
 
 // self is the contact this node sends with every message.
@@ -164,7 +163,7 @@ func (d *DHT) ensureJoined(ctx context.Context) error {
 func (d *DHT) refresh(ctx context.Context) error {
 	if d.table.Len() == 0 {
 		for _, addr := range d.cfg.Bootstrap(ctx) {
-			if _, err := d.call(ctx, []string{addr}, msgFindNode, request{Target: d.id}); err != nil {
+			if _, err := d.call(ctx, api.Peer{Addrs: []string{addr}}, msgFindNode, request{Target: d.id}); err != nil {
 				slog.Debug("discovery: bootstrap failed", "addr", addr, "err", err)
 			}
 		}
@@ -192,7 +191,7 @@ func (d *DHT) announce(ctx context.Context) {
 		d.providers.add(k, rec)
 		closest, _ := d.lookup(ctx, k, msgFindNode)
 		for _, c := range closest {
-			if _, err := d.call(ctx, c.Addrs, msgAddProvider, request{Target: k, Record: &rec}); err != nil {
+			if _, err := d.call(ctx, peerOf(c), msgAddProvider, request{Target: k, Record: &rec}); err != nil {
 				d.table.Remove(c.ID)
 			}
 		}
@@ -232,7 +231,7 @@ func (d *DHT) lookup(ctx context.Context, target ID, msg string) ([]Contact, map
 		for _, c := range batch {
 			asked[c.ID] = true
 			go func() {
-				resp, err := d.call(ctx, c.Addrs, msg, request{Target: target})
+				resp, err := d.call(ctx, peerOf(c), msg, request{Target: target})
 				results <- result{c, resp, err}
 			}()
 		}
@@ -242,9 +241,6 @@ func (d *DHT) lookup(ctx context.Context, target ID, msg string) ([]Contact, map
 				d.table.Remove(res.from.ID)
 				shortlist = slices.DeleteFunc(shortlist, func(c Contact) bool { return c.ID == res.from.ID })
 				continue
-			}
-			if res.resp.From.ID != res.from.ID {
-				d.table.Remove(res.from.ID) // another node answers at its address now
 			}
 			for _, r := range res.resp.Providers {
 				if r.valid(d.providers.ttl) {

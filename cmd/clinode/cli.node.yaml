@@ -7,7 +7,5 @@ modules:
       # Any node already in the network; no node is special.
       bootstrap:
         - ${DISCOVERY_BOOTSTRAP}
-  # Lets the CLI reach nodes that are only reachable through relays.
-  - name: relay
   # Diagnostics: map_network, ping_node.
   - name: debug

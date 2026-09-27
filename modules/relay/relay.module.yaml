@@ -1,6 +1,0 @@
-version: 1.0
-name: relay
-description: Makes nodes behind NAT or firewalls reachable through relay nodes.
-capabilities:
-  - name: list_reservations
-    description: Lists the IDs of the nodes reachable through this relay.

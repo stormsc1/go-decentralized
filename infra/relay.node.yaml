@@ -1,10 +1,11 @@
 version: 1.0
 name: relay-node
 desc: Relay hosted by the SaaS provider, for nodes that accept no connections
+network:
+  relay:
+    # Relay for nodes that accept no connections.
+    serve: true
 modules:
   - name: discovery
-  - name: relay
-    config:
-      serve: true
   # Lets tools such as the network explorer (web/) inspect this node.
   - name: debug

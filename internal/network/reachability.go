@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strconv"
 	"time"
+
+	"go-decentralized/internal/api"
 )
 
 const (
@@ -17,13 +19,8 @@ const (
 	msgDialBack = "network.dial_back"
 )
 
-type pingResponse struct {
-	ID string `json:"id"`
-}
-
 type dialBackRequest struct {
-	ID   string `json:"id"`
-	Port int    `json:"port"`
+	Port int `json:"port"`
 }
 
 type dialBackResponse struct {
@@ -33,41 +30,16 @@ type dialBackResponse struct {
 	OK bool `json:"ok"`
 }
 
-// Pong is the answer to a Ping.
-type Pong struct {
-	ID   string        // ID of the node that answered
-	Addr string        // address it answered at
-	RTT  time.Duration // round-trip time
-}
-
-// Ping pings the node at addrs, tried in order, and reports the first one
-// that answers.
-func (n *Network) Ping(ctx context.Context, addrs []string) (Pong, error) {
-	var errs []error
-	for _, addr := range addrs {
-		start := time.Now()
-		var resp pingResponse
-		if err := n.Send(ctx, []string{addr}, msgPing, struct{}{}, &resp); err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		return Pong{ID: resp.ID, Addr: addr, RTT: time.Since(start)}, nil
-	}
-	if len(errs) == 0 {
-		return Pong{}, errors.New("no address")
-	}
-	return Pong{}, errors.Join(errs...)
-}
-
-func (n *Network) ping(context.Context, struct{}) (pingResponse, error) {
-	return pingResponse{ID: n.cfg.ID}, nil
+func (n *Network) ping(context.Context, struct{}) (struct{}, error) {
+	return struct{}{}, nil
 }
 
 // dialBack tells the caller the address it was observed at and whether it
-// accepts connections there. Only the caller's own IP is dialed, so this
-// can't be used to make us connect to someone else.
+// accepts connections there, as it proves over TLS. Only the caller's own IP
+// is dialed, so this can't be used to make us connect to someone else.
 func (n *Network) dialBack(ctx context.Context, req dialBackRequest) (dialBackResponse, error) {
-	if req.ID == n.cfg.ID {
+	caller := RemoteID(ctx)
+	if caller == n.id {
 		// Reaching ourselves proves nothing, e.g. when mDNS finds our own
 		// announcement.
 		return dialBackResponse{}, errors.New("dial-back to self")
@@ -77,14 +49,13 @@ func (n *Network) dialBack(ctx context.Context, req dialBackRequest) (dialBackRe
 		return dialBackResponse{}, err
 	}
 	addr := net.JoinHostPort(host, strconv.Itoa(req.Port))
-	var resp pingResponse
-	err = n.Send(ctx, []string{addr}, msgPing, struct{}{}, &resp)
-	return dialBackResponse{Addr: addr, OK: err == nil && resp.ID == req.ID}, nil
+	err = n.Send(ctx, api.Peer{ID: caller, Addrs: []string{addr}}, msgPing, struct{}{}, &struct{}{})
+	return dialBackResponse{Addr: addr, OK: err == nil}, nil
 }
 
-// Run keeps the node's reachable addresses up to date until ctx is done.
-// peers returns the addresses of known nodes to ask for dial-backs.
-func (n *Network) Run(ctx context.Context, peers func(context.Context) [][]string) {
+// watchReachability keeps the node's reachable addresses up to date until
+// ctx is done. peers returns known nodes to ask for dial-backs.
+func (n *Network) watchReachability(ctx context.Context, peers func(context.Context) []api.Peer) {
 	if n.cfg.ListenPort == 0 {
 		return
 	}
@@ -104,13 +75,13 @@ func (n *Network) Run(ctx context.Context, peers func(context.Context) [][]strin
 // checkReachability asks a few peers to dial us back. It records the IPs they
 // saw us at and keeps the addresses at least one of them reached. It reports
 // false if no peer gave a usable answer, in which case nothing changes.
-func (n *Network) checkReachability(ctx context.Context, peers [][]string) bool {
+func (n *Network) checkReachability(ctx context.Context, peers []api.Peer) bool {
 	rand.Shuffle(len(peers), func(i, j int) { peers[i], peers[j] = peers[j], peers[i] })
 
 	var reachable, observed []string
 	for _, peer := range peers[:min(3, len(peers))] {
 		var resp dialBackResponse
-		if err := n.Send(ctx, peer, msgDialBack, dialBackRequest{ID: n.cfg.ID, Port: n.cfg.ListenPort}, &resp); err != nil {
+		if err := n.Send(ctx, peer, msgDialBack, dialBackRequest{Port: n.cfg.ListenPort}, &resp); err != nil {
 			continue
 		}
 		// A peer on our LAN sees and reaches our private address, which the

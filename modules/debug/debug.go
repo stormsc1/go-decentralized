@@ -7,22 +7,28 @@ package debug
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
 	"time"
 
+	"go-decentralized/internal/api"
 	"go-decentralized/internal/module"
-	"go-decentralized/internal/network"
 	"go-decentralized/modules/debug/capabilities"
 	"go-decentralized/modules/discovery/kademlia"
 )
 
 const Name = "debug"
 
-// msgReport asks a node for its Report. The nodes answering it are the
+// Messages debug sends between nodes. The nodes answering them are the
 // providers of the debug.report capability.
-const msgReport = "debug.report"
+const (
+	msgReport = "report"
+	msgTraces = "traces"
+	// msgPing is answered by every node's network.
+	msgPing = "network.ping"
+)
 
 // Report describes a node's state.
 type Report struct {
@@ -35,6 +41,8 @@ type Report struct {
 	// Observed are the public IPs other nodes see the node at. Nodes behind
 	// the same NAT share them.
 	Observed []string `json:"observed,omitempty"`
+	// Network is the state of the node's network, e.g. its relays.
+	Network any `json:"network,omitempty"`
 	// Modules maps each module to its capabilities and, for modules that
 	// implement module.Inspector, its state.
 	Modules map[string]ModuleReport `json:"modules"`
@@ -55,22 +63,13 @@ type pingResult struct {
 type Module struct {
 	env module.Env
 
-	mu     sync.Mutex
-	traces []network.Trace    // what this node sent, oldest first
-	nodes  []kademlia.Contact // nodes running the debug module, see debugNodes
-	found  time.Time          // when nodes was looked up
+	mu    sync.Mutex
+	nodes []kademlia.Contact // nodes running the debug module, see debugNodes
+	found time.Time          // when nodes was looked up
 }
 
 func New(_ func(any) error, env module.Env) (module.Module, error) {
-	m := &Module{env: env}
-	env.Network.OnTrace(m.record)
-	network.Handle(env.Network, msgReport, func(context.Context, struct{}) (Report, error) {
-		return m.report(), nil
-	})
-	network.Handle(env.Network, msgTraces, func(_ context.Context, req tracesRequest) ([]network.Trace, error) {
-		return m.tracesSince(req.Since), nil
-	})
-	return m, nil
+	return &Module{env: env}, nil
 }
 
 func (m *Module) Name() string { return Name }
@@ -84,6 +83,17 @@ func (m *Module) Capabilities() []module.Capability {
 	}
 }
 
+func (m *Module) Messages() map[string]module.Handler {
+	return map[string]module.Handler{
+		msgReport: module.HandlerFor(func(context.Context, struct{}) (Report, error) {
+			return m.report(), nil
+		}),
+		msgTraces: module.HandlerFor(func(_ context.Context, req tracesRequest) ([]api.Trace, error) {
+			return m.env.Network.Traces(req.Since), nil
+		}),
+	}
+}
+
 func (m *Module) report() Report {
 	r := Report{
 		ID:       m.env.NodeID,
@@ -91,6 +101,7 @@ func (m *Module) report() Report {
 		Addrs:    m.env.Network.Addrs(),
 		Direct:   len(m.env.Network.DirectAddrs()) > 0,
 		Observed: m.env.Network.Observed(),
+		Network:  m.env.Network.Inspect(),
 		Modules:  map[string]ModuleReport{},
 	}
 	for _, mod := range m.env.Registry.Modules() {
@@ -108,7 +119,7 @@ func (m *Module) report() Report {
 
 // mapNetwork reports on every node running the debug module.
 func (m *Module) mapNetwork(ctx context.Context) ([]Report, error) {
-	ctx = network.WithoutTrace(ctx) // keep our own polling out of the traffic
+	ctx = module.Untraced(ctx) // keep our own polling out of the traffic
 	nodes, err := m.debugNodes(ctx)
 	if err != nil {
 		return nil, err
@@ -117,7 +128,7 @@ func (m *Module) mapNetwork(ctx context.Context) ([]Report, error) {
 	var wg sync.WaitGroup
 	for i, n := range nodes {
 		wg.Go(func() {
-			if err := m.env.Network.Send(ctx, n.Addrs, msgReport, struct{}{}, &reports[i]); err != nil {
+			if err := m.env.Send(ctx, peerOf(n), Name+"."+msgReport, struct{}{}, &reports[i]); err != nil {
 				reports[i] = Report{ID: n.ID.String(), Name: n.Name, Addrs: n.Addrs, Error: err.Error()}
 			}
 		})
@@ -138,7 +149,7 @@ func (m *Module) debugNodes(ctx context.Context) ([]kademlia.Contact, error) {
 	if fresh {
 		return nodes, nil
 	}
-	found, err := m.env.Registry.Invoke(ctx, "discovery.find_capability_providers", module.Args{"capability": msgReport})
+	found, err := m.env.Registry.Invoke(ctx, "discovery.find_capability_providers", module.Args{"capability": Name + ".report"})
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +163,8 @@ func (m *Module) debugNodes(ctx context.Context) ([]kademlia.Contact, error) {
 	return nodes, nil
 }
 
-// ping pings the node with the given ID, through a relay if needed.
+// ping pings the node with the given ID, through a relay if needed, and
+// reports the address that answered first. TLS proves it's the right node.
 func (m *Module) ping(ctx context.Context, id string) (any, error) {
 	found, err := m.env.Registry.Invoke(ctx, "discovery.find_node_by_id", module.Args{"id": id})
 	if err != nil {
@@ -162,12 +174,18 @@ func (m *Module) ping(ctx context.Context, id string) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unexpected node %T", found)
 	}
-	pong, err := m.env.Network.Ping(ctx, node.Addrs)
-	if err != nil {
-		return nil, err
+	var errs []error
+	for _, addr := range node.Addrs {
+		start := time.Now()
+		err := m.env.Send(ctx, api.Peer{ID: node.ID.String(), Addrs: []string{addr}}, msgPing, struct{}{}, &struct{}{})
+		if err == nil {
+			return pingResult{Addr: addr, RTT: time.Since(start).Round(time.Microsecond).String()}, nil
+		}
+		errs = append(errs, err)
 	}
-	if pong.ID != node.ID.String() {
-		return nil, fmt.Errorf("%s answered as node %s", pong.Addr, pong.ID)
-	}
-	return pingResult{Addr: pong.Addr, RTT: pong.RTT.Round(time.Microsecond).String()}, nil
+	return nil, errors.Join(errs...)
+}
+
+func peerOf(c kademlia.Contact) api.Peer {
+	return api.Peer{ID: c.ID.String(), Addrs: c.Addrs}
 }
