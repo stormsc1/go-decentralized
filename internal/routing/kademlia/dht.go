@@ -9,13 +9,13 @@ import (
 	"slices"
 	"time"
 
-	"go-decentralized/module"
+	"go-decentralized/internal/network"
 )
 
 // alpha is the number of calls a lookup keeps in flight at once.
 const alpha = 3
 
-// SignFunc signs data for purpose with this node's key, see module.Env.
+// SignFunc signs data for purpose with this node's key, see module.Sign.
 type SignFunc func(ctx context.Context, purpose string, data []byte) ([]byte, error)
 
 type Config struct {
@@ -32,7 +32,7 @@ type Config struct {
 	// tables, but can still be found through its record.
 	DirectAddrs func() []string
 	// Call calls a DHT capability, named as in Handlers, on another node.
-	Call func(ctx context.Context, to module.Peer, name string, in, out any) error
+	Call func(ctx context.Context, to network.Peer, name string, in, out any) error
 	// Bootstrap returns addresses (host:port) of nodes to join the network
 	// through. It is called whenever the routing table is empty.
 	Bootstrap func(ctx context.Context) []string
@@ -84,7 +84,7 @@ func (d *DHT) Run(ctx context.Context) {
 		changed := !slices.Equal(addrs, announcedAddrs)
 		if d.table.Len() == 0 || changed || time.Since(refreshed) >= d.cfg.Refresh {
 			if err := d.refresh(ctx); err != nil {
-				slog.Warn("discovery: refresh failed", "err", err)
+				slog.Warn("routing: refresh failed", "err", err)
 			} else {
 				refreshed = time.Now()
 			}
@@ -103,6 +103,26 @@ func (d *DHT) Run(ctx context.Context) {
 
 // Known returns the nodes in the routing table, without any lookups.
 func (d *DHT) Known() []Contact { return d.table.All() }
+
+// Local returns what this node knows of the node id, without any lookups:
+// its record, which has every address it can be reached at, or else its
+// routing table contact.
+func (d *DHT) Local(id ID) (Contact, bool) {
+	if id == d.id {
+		return d.selfRecord(), true
+	}
+	for _, r := range d.providers.nodeRecords() {
+		if r.ID() == id {
+			return r.Contact(), true
+		}
+	}
+	for _, c := range d.table.All() {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return Contact{}, false
+}
 
 // Nodes returns the nodes this node knows: its routing table, the records it
 // stores (which include client-mode nodes) and itself.
@@ -174,8 +194,8 @@ func (d *DHT) ensureJoined(ctx context.Context) error {
 func (d *DHT) refresh(ctx context.Context) error {
 	if d.table.Len() == 0 {
 		for _, addr := range d.cfg.Bootstrap(ctx) {
-			if _, err := d.call(ctx, module.Peer{Addrs: []string{addr}}, capFindNode, request{Target: d.id}); err != nil {
-				slog.Debug("discovery: bootstrap failed", "addr", addr, "err", err)
+			if _, err := d.call(ctx, network.Peer{Addrs: []string{addr}}, capFindNode, request{Target: d.id}); err != nil {
+				slog.Debug("routing: bootstrap failed", "addr", addr, "err", err)
 			}
 		}
 		if d.table.Len() == 0 {
@@ -195,7 +215,7 @@ func (d *DHT) announce(ctx context.Context) {
 	}
 	rec, err := newRecord(ctx, d.cfg.Sign, d.cfg.PublicKey, d.cfg.Name, addrs)
 	if err != nil {
-		slog.Warn("discovery: can't sign record", "err", err)
+		slog.Warn("routing: can't sign record", "err", err)
 		return
 	}
 	keys := []ID{d.id}

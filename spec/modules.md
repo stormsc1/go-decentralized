@@ -40,7 +40,7 @@ The module learns who called: the ID the calling node proved over TLS, or its ow
 
 ## What nodes give modules
 
-Modules call capabilities of their own node's modules, and of other nodes. They call as the node: other nodes see the node's ID.
+Modules call capabilities of their own node's modules, and of other nodes, which they name by ID alone: the node finds them ([routing.md](routing.md)). They call as the node: other nodes see the node's ID.
 
 Nodes have capabilities of their own, for their modules and tools. Schemas: `internal/node/node.module.yaml`.
 
@@ -53,7 +53,7 @@ Nodes have capabilities of their own, for their modules and tools. Schemas: `int
 
 ## Signing
 
-Modules sign with the node's key through `node.sign`, and only for purposes that start with their name, such as `discovery.record`. The node signs, with Ed25519:
+Modules sign with the node's key through `node.sign`, and only for purposes that start with their name, such as `greeter.token`. The node signs, with Ed25519:
 
 ```
 "decentralized-signature" 0x00 <purpose> 0x00 <data>
@@ -85,7 +85,7 @@ modules:
 - Messages ([wire.md](wire.md), JSON-RPC 2.0) travel over the process's stdin, from the node, and stdout, from the module, one per line, as in MCP's stdio transport. Nothing else may be written to stdout. stderr is the module's log, which the node keeps.
 - Both sides make calls and pick the `id`s of their own. Calls run concurrently, and end in any order. Either side can cancel its own call.
 - On calls the node sends, `_meta.from` is the ID of the node that made the call.
-- On calls the module sends, `_meta.to` (`{id, addrs}`) asks the node to call another node. Without it, the call is to the node's own capabilities.
+- On calls the module sends, `_meta.to`, a node ID, asks the node to call that node. Without it, the call is to the node's own capabilities.
 
 The node's first call is `module.start`, with input `{node: {id, name}, config}`, where `config` is the module's block from the node definition. It returns `{manifest}`, and from then on the node serves the module's capabilities. The node may also call `module.inspect`, which returns the module's state for debugging, or `{}`.
 

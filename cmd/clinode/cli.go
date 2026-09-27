@@ -159,13 +159,13 @@ func printResult(ref string, result json.RawMessage) {
 	}
 	_ = json.Unmarshal(result, &out)
 	switch ref {
-	case "discovery.list_nodes":
+	case "routing.list_nodes":
 		var nodes []contact
 		_ = json.Unmarshal(out.Nodes, &nodes)
 		printContacts(nodes)
-	case "discovery.find_capability_providers":
+	case "routing.find_providers":
 		printContacts(out.Providers)
-	case "discovery.find_node_by_id":
+	case "routing.find_node":
 		var c contact
 		_ = json.Unmarshal(result, &c)
 		printContacts([]contact{c})

@@ -17,8 +17,6 @@ import (
 const (
 	refPing     = "network.ping"
 	refDialBack = "network.dial_back"
-	// maxKnown bounds how many peers are kept to ask for dial-backs.
-	maxKnown = 16
 )
 
 type dialBackInput struct {
@@ -60,38 +58,15 @@ func (n *Network) dialBack(ctx context.Context, in dialBackInput) (dialBackOutpu
 	return dialBackOutput{Addr: addr, Reachable: err == nil}, nil
 }
 
-// remember keeps a peer that answered at a direct address, to ask for
-// dial-backs.
-func (n *Network) remember(p module.Peer) {
-	if p.ID == n.id {
-		return // e.g. found on the LAN by mDNS: asking ourselves proves nothing
-	}
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	n.known = slices.DeleteFunc(n.known, func(k module.Peer) bool { return slices.Equal(k.Addrs, p.Addrs) })
-	n.known = slices.Insert(n.known, 0, p)
-	n.known = n.known[:min(maxKnown, len(n.known))]
-}
-
-// peers returns the peers to ask for dial-backs: those that answered at a
-// public address, and so are outside any NAT this node is behind.
-func (n *Network) peers() []module.Peer {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	return slices.DeleteFunc(slices.Clone(n.known), func(p module.Peer) bool {
-		return !n.cfg.Private && !public(p.Addrs[0])
-	})
-}
-
 // watchReachability keeps the node's reachable addresses up to date until
-// ctx is done, asking peers it has talked to for dial-backs.
-func (n *Network) watchReachability(ctx context.Context) {
+// ctx is done, asking peers for dial-backs.
+func (n *Network) watchReachability(ctx context.Context, peers func() []Peer) {
 	if n.cfg.ListenPort == 0 {
 		return
 	}
 	for {
 		wait := time.Minute
-		if !n.checkReachability(ctx, n.peers()) {
+		if !n.checkReachability(ctx, peers()) {
 			wait = 5 * time.Second // no usable answer yet
 		}
 		select {
@@ -105,7 +80,7 @@ func (n *Network) watchReachability(ctx context.Context) {
 // checkReachability asks a few peers to dial us back. It records the IPs they
 // saw us at and keeps the addresses at least one of them reached. It reports
 // false if no peer gave a usable answer, in which case nothing changes.
-func (n *Network) checkReachability(ctx context.Context, peers []module.Peer) bool {
+func (n *Network) checkReachability(ctx context.Context, peers []Peer) bool {
 	rand.Shuffle(len(peers), func(i, j int) { peers[i], peers[j] = peers[j], peers[i] })
 
 	var reachable, observed []string

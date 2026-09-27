@@ -68,15 +68,15 @@ func TestMain(m *testing.M) {
 
 func TestNativeModule(t *testing.T) {
 	ctx := context.Background()
-	caller, _ := start(t, ModuleConfig{Name: "echo"})
-	callee, calleeAddr := start(t, ModuleConfig{Name: "echo"})
+	caller, _ := start(t, nil, ModuleConfig{Name: "echo"})
+	callee, calleeAddr := start(t, nil, ModuleConfig{Name: "echo"})
 	testModule(t, ctx, caller, callee, calleeAddr)
 }
 
 func TestProcessModule(t *testing.T) {
 	ctx := context.Background()
-	caller, _ := start(t, ModuleConfig{Name: "echo"})
-	callee, calleeAddr := start(t, ModuleConfig{Name: "echo", Run: []string{os.Args[0]}})
+	caller, _ := start(t, nil, ModuleConfig{Name: "echo"})
+	callee, calleeAddr := start(t, nil, ModuleConfig{Name: "echo", Run: []string{os.Args[0]}})
 	if info := callee.Info(); info.Modules[len(info.Modules)-1].Runtime != "process" {
 		t.Fatalf("echo runs as %q", info.Modules[len(info.Modules)-1].Runtime)
 	}
@@ -87,7 +87,7 @@ func TestProcessModule(t *testing.T) {
 // the network, and from callee itself.
 func testModule(t *testing.T, ctx context.Context, caller, callee *Node, calleeAddr string) {
 	t.Helper()
-	peer := module.Peer{ID: callee.ID, Addrs: []string{calleeAddr}}
+	peer := network.Peer{ID: callee.ID, Addrs: []string{calleeAddr}}
 	var out struct {
 		Caller string
 		Sum    int
@@ -124,9 +124,24 @@ func testModule(t *testing.T, ctx context.Context, caller, callee *Node, calleeA
 	}
 }
 
+// A node calling another by ID alone finds it through routing: here, over the
+// DHT, knowing only the other's address to bootstrap from.
+func TestCallByID(t *testing.T) {
+	callee, calleeAddr := start(t, nil, ModuleConfig{Name: "echo"})
+	caller, _ := start(t, []string{calleeAddr}, ModuleConfig{Name: "echo"})
+	result, err := caller.callNode(context.Background(), callee.ID, "echo.whoami", nil)
+	var out struct{ Caller string }
+	if err == nil {
+		err = json.Unmarshal(result, &out)
+	}
+	if err != nil || out.Caller != caller.ID {
+		t.Fatalf("whoami = %q, %v; want the caller %.8s", out.Caller, err, caller.ID)
+	}
+}
+
 // start runs a node with one module, listening on localhost, until the test
-// ends.
-func start(t *testing.T, mc ModuleConfig) (*Node, string) {
+// ends. It joins the network through bootstrap, if any.
+func start(t *testing.T, bootstrap []string, mc ModuleConfig) (*Node, string) {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -136,11 +151,11 @@ func start(t *testing.T, mc ModuleConfig) (*Node, string) {
 	l.Close()
 
 	key, _ := identity.Load("")
-	nw, err := network.New(network.Config{Key: key, ListenPort: l.Addr().(*net.TCPAddr).Port, Private: true})
+	nw, err := network.New(network.Config{Key: key, ListenPort: l.Addr().(*net.TCPAddr).Port, Announce: []string{addr}, Private: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := New(Config{Name: "test", Modules: []ModuleConfig{mc}}, key, nw, map[string]module.Factory{"echo": newEcho})
+	n, err := New(Config{Name: "test", Network: NetworkConfig{Bootstrap: bootstrap, MDNS: new(bool)}, Modules: []ModuleConfig{mc}}, key, nw, map[string]module.Factory{"echo": newEcho})
 	if err != nil {
 		t.Fatal(err)
 	}

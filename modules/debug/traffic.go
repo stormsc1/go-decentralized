@@ -56,7 +56,7 @@ func (m *Module) traffic(ctx context.Context, in since) (traces, error) {
 		}
 		wg.Go(func() {
 			var theirs traces
-			if err := m.env.CallNode(ctx, peerOf(n), Name+".traces", in, &theirs); err != nil {
+			if err := m.env.CallNode(ctx, n.ID, Name+".traces", in, &theirs); err != nil {
 				return
 			}
 			mu.Lock()

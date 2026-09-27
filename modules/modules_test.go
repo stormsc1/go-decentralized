@@ -75,9 +75,8 @@ func TestCatalogue(t *testing.T) {
 	var cfg node.Config
 	err := yaml.Unmarshal([]byte(`
 name: test
+network: {mdns: false}
 modules:
-  - name: discovery
-    config: {mdns: false}
   - name: debug
   - name: greeter
     config: {greeting: Hi}
@@ -86,8 +85,8 @@ modules:
 		t.Fatal(err)
 	}
 	n := newNode(t, cfg)
-	if got := len(n.Info().Modules); got != 2+len(Factories) {
-		t.Fatalf("node runs %d modules, want the node's and network's plus %d", got, len(Factories))
+	if got := len(n.Info().Modules); got != 3+len(Factories) {
+		t.Fatalf("node runs %d modules, want the 3 built in plus %d", got, len(Factories))
 	}
 	result, err := n.Call(context.Background(), "greeter.hello", json.RawMessage(`{"name": "you"}`))
 	if err != nil {

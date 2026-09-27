@@ -2,15 +2,13 @@ version: 1.0
 name: ${ORG}-${PROJECT}-node
 desc: Project node owning the ${PROJECT} project in the ${ORG} organization
 network:
+  # Any node already in the network, to join through; no node is special.
+  bootstrap:
+    - ${BOOTSTRAP}
   relay:
     # Relays to stay reachable through if this node accepts no connections.
     via:
       - ${RELAY_VIA}
 modules:
-  - name: discovery
-    config:
-      # Any node already in the network; no node is special.
-      bootstrap:
-        - ${DISCOVERY_BOOTSTRAP}
   # Lets tools such as the network explorer (web/) inspect this node.
   - name: debug

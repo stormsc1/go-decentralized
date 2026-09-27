@@ -16,6 +16,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"go-decentralized/internal/network"
+	"go-decentralized/internal/routing"
 	"go-decentralized/module"
 )
 
@@ -27,6 +28,7 @@ type Node struct {
 	Config  Config
 	ID      string
 	Network *network.Network
+	routing *routing.Routing
 	key     ed25519.PrivateKey
 
 	// Process modules may call while later modules load.
@@ -76,6 +78,20 @@ func New(cfg Config, key ed25519.PrivateKey, nw *network.Network, factories map[
 		return nil, err
 	}
 	if err := n.add(&loaded{manifest: nw.Manifest(), runtime: "builtin"}, natives(nw.Handlers())); err != nil {
+		return nil, err
+	}
+	n.routing, err = routing.New(routing.Config{
+		Key:       key,
+		Name:      cfg.Name,
+		Network:   nw,
+		Bootstrap: cfg.Network.Bootstrap,
+		MDNS:      cfg.Network.MDNS == nil || *cfg.Network.MDNS,
+		Provides:  n.provides,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := n.add(&loaded{manifest: n.routing.Manifest(), runtime: "builtin"}, natives(n.routing.Handlers())); err != nil {
 		return nil, err
 	}
 	for _, mc := range cfg.Modules {
@@ -241,12 +257,12 @@ func (n *Node) env(name string) module.Env {
 			}
 			return module.Decode(result, out)
 		},
-		CallNode: func(ctx context.Context, to module.Peer, ref string, in, out any) error {
+		CallNode: func(ctx context.Context, id, ref string, in, out any) error {
 			body, err := module.Encode(in)
 			if err != nil {
 				return err
 			}
-			result, err := n.Network.Call(ctx, to, ref, body)
+			result, err := n.callNode(context.WithValue(ctx, moduleKey{}, name), id, ref, body)
 			if err != nil {
 				return err
 			}
@@ -256,6 +272,38 @@ func (n *Node) env(name string) module.Env {
 			return n.sign(name, purpose, data)
 		},
 	}
+}
+
+// callNode calls the capability ref of the node id, as this node: over its
+// session with the node, or wherever routing finds it. Calls to this node
+// itself stay local.
+func (n *Node) callNode(ctx context.Context, id, ref string, body json.RawMessage) (json.RawMessage, error) {
+	if id == n.ID {
+		return n.call(ctx, n.ID, ref, body)
+	}
+	peer := network.Peer{ID: id}
+	if !n.Network.Connected(id) {
+		var err error
+		if peer, err = n.routing.Resolve(ctx, id); err != nil {
+			return nil, err
+		}
+	}
+	return n.Network.Call(ctx, peer, ref, body)
+}
+
+// provides returns the capabilities this node announces, so other nodes can
+// find it by them: those they may call, except the ones internal to a
+// protocol.
+func (n *Node) provides() []string {
+	var refs []string
+	for _, l := range n.loadedModules() {
+		for _, c := range l.manifest.Capabilities {
+			if c.Access == module.Network && !c.Internal {
+				refs = append(refs, l.manifest.Name+"."+c.Name)
+			}
+		}
+	}
+	return refs
 }
 
 // sign signs data for a module, for a purpose it owns.
@@ -274,7 +322,8 @@ func (n *Node) sign(name, purpose string, data []byte) ([]byte, error) {
 // until ctx is done.
 func (n *Node) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Go(func() { n.Network.Run(ctx) })
+	wg.Go(func() { n.Network.Run(ctx, n.routing.Peers) })
+	wg.Go(func() { n.routing.Run(ctx) })
 	for _, l := range n.loadedModules() {
 		if r, ok := l.native.(module.Runner); ok {
 			wg.Go(func() { r.Run(ctx) })

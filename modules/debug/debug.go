@@ -1,6 +1,6 @@
 // Package debug reports on nodes, for tools like the network explorer
 // (web/). Nodes running it announce debug.report like any capability, so a
-// tool finds every node it can debug through discovery, and asks each for
+// tool finds every node it can debug through routing, and asks each for
 // its report over the network.
 package debug
 
@@ -29,6 +29,7 @@ type Report struct {
 	Direct   bool                    `json:"direct"`
 	Observed []string                `json:"observed,omitempty"`
 	Network  json.RawMessage         `json:"network,omitempty"`
+	Routing  json.RawMessage         `json:"routing,omitempty"`
 	Modules  map[string]ModuleReport `json:"modules"`
 	Error    string                  `json:"error,omitempty"`
 }
@@ -38,7 +39,7 @@ type ModuleReport struct {
 	State        json.RawMessage `json:"state,omitempty"`
 }
 
-// node is a node as discovery finds it.
+// node is a node as routing finds it.
 type node struct {
 	ID    string   `json:"id"`
 	Name  string   `json:"name,omitempty"`
@@ -76,6 +77,7 @@ func (m *Module) report(ctx context.Context) (Report, error) {
 	}
 	var state struct {
 		Network json.RawMessage            `json:"network"`
+		Routing json.RawMessage            `json:"routing"`
 		Modules map[string]json.RawMessage `json:"modules"`
 	}
 	if err := m.env.Call(ctx, "node.inspect", nil, &state); err != nil {
@@ -88,6 +90,7 @@ func (m *Module) report(ctx context.Context) (Report, error) {
 		Direct:   len(info.DirectAddrs) > 0,
 		Observed: info.Observed,
 		Network:  state.Network,
+		Routing:  state.Routing,
 		Modules:  map[string]ModuleReport{},
 	}
 	for _, mod := range info.Modules {
@@ -124,7 +127,7 @@ func (m *Module) mapNetwork(ctx context.Context, _ struct{}) (mapped, error) {
 			if n.ID == m.env.NodeID {
 				reports[i], err = m.report(ctx)
 			} else {
-				err = m.env.CallNode(ctx, peerOf(n), Name+".report", nil, &reports[i])
+				err = m.env.CallNode(ctx, n.ID, Name+".report", nil, &reports[i])
 			}
 			if err != nil {
 				reports[i] = Report{ID: n.ID, Name: n.Name, Addrs: n.Addrs, Error: err.Error()}
@@ -150,7 +153,7 @@ func (m *Module) debugNodes(ctx context.Context) ([]node, error) {
 	var found struct {
 		Providers []node `json:"providers"`
 	}
-	if err := m.env.Call(ctx, "discovery.find_capability_providers", map[string]string{"capability": Name + ".report"}, &found); err != nil {
+	if err := m.env.Call(ctx, "routing.find_providers", map[string]string{"capability": Name + ".report"}, &found); err != nil {
 		return nil, err
 	}
 	m.mu.Lock()
@@ -164,21 +167,17 @@ type pingOutput struct {
 }
 
 // ping pings the node with the given ID, through a relay if needed. TLS
-// proves it's the right node.
+// proves it's the right node. The first ping finds and connects to the
+// node; the second measures the round trip.
 func (m *Module) ping(ctx context.Context, in struct {
 	ID string `json:"id"`
 }) (pingOutput, error) {
-	var found node
-	if err := m.env.Call(ctx, "discovery.find_node_by_id", in, &found); err != nil {
+	if err := m.env.CallNode(ctx, in.ID, "network.ping", nil, nil); err != nil {
 		return pingOutput{}, err
 	}
 	start := time.Now()
-	if err := m.env.CallNode(ctx, peerOf(found), "network.ping", nil, nil); err != nil {
+	if err := m.env.CallNode(ctx, in.ID, "network.ping", nil, nil); err != nil {
 		return pingOutput{}, err
 	}
 	return pingOutput{RTT: time.Since(start).Round(time.Microsecond).String()}, nil
-}
-
-func peerOf(n node) module.Peer {
-	return module.Peer{ID: n.ID, Addrs: n.Addrs}
 }

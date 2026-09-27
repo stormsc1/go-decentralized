@@ -21,8 +21,14 @@ type Config struct {
 	Modules []ModuleConfig `yaml:"modules"`
 }
 
-// NetworkConfig configures the node's transport.
+// NetworkConfig configures how the node reaches, and finds, other nodes.
 type NetworkConfig struct {
+	// Bootstrap are addresses (host:port) of any nodes already in the
+	// network, to join it through.
+	Bootstrap []string `yaml:"bootstrap"`
+	// MDNS advertises this node and finds others on the local network.
+	// Defaults to true.
+	MDNS  *bool               `yaml:"mdns"`
 	Relay network.RelayConfig `yaml:"relay"`
 }
 

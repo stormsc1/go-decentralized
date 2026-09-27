@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"go-decentralized/internal/network"
 	"go-decentralized/module"
 )
 
@@ -82,8 +83,8 @@ func TestRecordSignature(t *testing.T) {
 // reach a node other than the one expected, as TLS does.
 type memNet map[string]*DHT
 
-func (m memNet) caller(from ID) func(ctx context.Context, to module.Peer, name string, in, out any) error {
-	return func(ctx context.Context, to module.Peer, name string, in, out any) error {
+func (m memNet) caller(from ID) func(ctx context.Context, to network.Peer, name string, in, out any) error {
+	return func(ctx context.Context, to network.Peer, name string, in, out any) error {
 		for _, addr := range to.Addrs {
 			d := m[addr]
 			if d == nil || (to.ID != "" && to.ID != d.id.String()) {

@@ -51,7 +51,6 @@ type Network struct {
 	reachable    []string                   // direct addresses confirmed by dial-back
 	observed     []string                   // public IPs peers saw this node at
 	relayed      []string                   // addresses through relays holding a reservation for us
-	known        []module.Peer              // peers that answered at a direct address, newest first
 	reservations map[string]*websocket.Conn // held here, as a relay, by node ID
 	waiting      map[string]*waiting        // callers' connections, until their node takes them
 	traces       []Trace                    // what this node sent, oldest first
@@ -92,6 +91,13 @@ func (n *Network) Handlers() map[string]module.Handler {
 	}
 }
 
+// Connected reports whether this node has a session with the node id.
+func (n *Network) Connected(id string) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return len(n.sessions[id]) > 0
+}
+
 // SetHandler sets the handler for the calls other nodes make.
 func (n *Network) SetHandler(h Handler) {
 	n.mu.Lock()
@@ -99,12 +105,20 @@ func (n *Network) SetHandler(h Handler) {
 	n.handler = h
 }
 
-// Run keeps the node's addresses up to date until ctx is done: it checks
-// which ones peers can reach and keeps its relay reservations. Then it
-// closes its sessions.
-func (n *Network) Run(ctx context.Context) {
+// Peer is a node to call: its ID, which the node answering must prove if
+// set, and the addresses to try, in order.
+type Peer struct {
+	ID    string   `json:"id,omitempty"`
+	Addrs []string `json:"addrs,omitempty"`
+}
+
+// Run keeps the node's addresses up to date until ctx is done: it asks peers
+// which ones they can reach, and keeps its relay reservations. Then it
+// closes its sessions. peers returns nodes that accept connections, outside
+// any NAT this node is behind, to ask for dial-backs.
+func (n *Network) Run(ctx context.Context, peers func() []Peer) {
 	var wg sync.WaitGroup
-	wg.Go(func() { n.watchReachability(ctx) })
+	wg.Go(func() { n.watchReachability(ctx, peers) })
 	for _, relay := range n.cfg.Relay.Via {
 		wg.Go(func() { n.keepReservation(ctx, relay) })
 	}

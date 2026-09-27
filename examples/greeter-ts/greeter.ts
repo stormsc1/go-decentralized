@@ -47,9 +47,6 @@ serve((config, env) => ({
     hello: (input, call) => ({
       greeting: `${config.greeting ?? 'Hello'} ${input.name ?? ''}, from ${env.nodeName}! You called from node ${call.caller.slice(0, 8)}. (TypeScript)`,
     }),
-    greet: async input => {
-      const peer = await env.call('discovery.find_node_by_id', { id: input.id })
-      return env.callNode(peer, 'greeter.hello', { name: input.name })
-    },
+    greet: input => env.callNode(input.id, 'greeter.hello', { name: input.name }),
   },
 }))

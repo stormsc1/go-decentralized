@@ -1,4 +1,5 @@
-// Package kademlia implements a minimal Kademlia DHT used for node discovery.
+// Package kademlia implements a minimal Kademlia DHT, which nodes find each
+// other, and the providers of capabilities, with.
 package kademlia
 
 import (

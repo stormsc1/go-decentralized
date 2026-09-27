@@ -129,8 +129,8 @@ func (p *process) start() (module.Manifest, error) {
 // else to this node's capabilities, as the node.
 func (p *process) handle(ctx context.Context, call module.Call) (json.RawMessage, error) {
 	ctx = context.WithValue(ctx, moduleKey{}, p.name)
-	if call.To != nil {
-		return p.n.Network.Call(ctx, *call.To, call.Ref, call.Input)
+	if call.To != "" {
+		return p.n.callNode(ctx, call.To, call.Ref, call.Input)
 	}
 	return p.n.call(ctx, p.n.ID, call.Ref, call.Input)
 }

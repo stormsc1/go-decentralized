@@ -24,7 +24,7 @@ capabilities:
     input: {$ref: "#/$defs/since"}
     output: {$ref: "#/$defs/traces"}
   - name: ping_node
-    description: Pings the node with the given ID, over this node's session with it, or a new one, through a relay if needed.
+    description: Pings the node with the given ID, through a relay if needed.
     input:
       type: object
       required: [id]
@@ -33,7 +33,7 @@ capabilities:
     output:
       type: object
       properties:
-        rtt: {type: string, description: "The round-trip time, e.g. 1.2ms."}
+        rtt: {type: string, description: "The round-trip time once connected, e.g. 1.2ms."}
 $defs:
   since:
     type: object
@@ -65,6 +65,7 @@ $defs:
       direct: {type: boolean, description: "Whether the node accepts direct connections. Nodes that don't are in client mode, reachable through relays if at all."}
       observed: {type: array, items: {type: string}, description: Public IPs other nodes see the node at. Nodes behind the same NAT share them.}
       network: {type: object, description: "The state of the node's network, e.g. its relays."}
+      routing: {type: object, description: "What the node knows of others: its routing table and LAN peers."}
       modules:
         type: object
         description: The node's modules, by name.

@@ -1,6 +1,8 @@
-# Discovery
+# Routing
 
-The discovery module finds nodes, and the nodes that provide a capability, over a Kademlia DHT ([Maymounkov & Mazières, 2002](https://www.scs.stanford.edu/~dm/home/papers/kpos.pdf)), without a central registry. Its capabilities and their schemas are in [modules/discovery/module.yaml](../../modules/discovery/module.yaml). This is how they behave, so other implementations can join the same DHT.
+How nodes find each other, and the nodes that provide a capability, without a central registry: over a Kademlia DHT ([Maymounkov & Mazières, 2002](https://www.scs.stanford.edu/~dm/home/papers/kpos.pdf)), and on the local network with mDNS. Every node does this; it's part of the wire protocol. Its capabilities, built into every node as `routing.*`, and their schemas are in [internal/routing/routing.module.yaml](../internal/routing/routing.module.yaml).
+
+Modules call other nodes by ID alone. The node reaches the other node over its session with it, if any. Otherwise it looks the node up: its LAN addresses first, then the addresses in its record or routing table contact, and if it knows neither, a DHT lookup.
 
 ## IDs and distance
 
@@ -24,7 +26,7 @@ The discovery module finds nodes, and the nodes that provide a capability, over 
 
 ## Records
 
-A record, `{data, sig}`, describes a node. `data` is JSON: `{public_key, name, addrs, time}`, with every address the node has, relays included, and `time` in Unix milliseconds. `sig` signs `data` as is, for the purpose `discovery.record` ([modules.md](../modules.md), "Signing").
+A record, `{data, sig}`, describes a node. `data` is JSON: `{public_key, name, addrs, time}`, with every address the node has, relays included, and `time` in Unix milliseconds. `sig` signs `data` as is, for the purpose `routing.record` ([modules.md](modules.md), "Signing").
 
 Records expire 30 minutes after `time`, and nodes reject records dated more than 30 minutes ahead. A newer record of a node replaces an older one.
 

@@ -54,16 +54,12 @@ func (m *Module) hello(ctx context.Context, in struct {
 	return greeting{fmt.Sprintf("%s %s, from %s! You called from node %.8s.", m.cfg.Greeting, in.Name, m.env.NodeName, module.Caller(ctx))}, nil
 }
 
-// greet finds the node with the given ID and asks it for a greeting.
+// greet asks the node with the given ID for a greeting.
 func (m *Module) greet(ctx context.Context, in struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }) (greeting, error) {
-	var peer module.Peer
-	if err := m.env.Call(ctx, "discovery.find_node_by_id", map[string]string{"id": in.ID}, &peer); err != nil {
-		return greeting{}, err
-	}
 	var out greeting
-	err := m.env.CallNode(ctx, peer, Name+".hello", map[string]string{"name": in.Name}, &out)
+	err := m.env.CallNode(ctx, in.ID, Name+".hello", map[string]string{"name": in.Name}, &out)
 	return out, err
 }

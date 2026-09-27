@@ -49,7 +49,7 @@ type dialing struct {
 // dials one at the first of to's addresses that answers. Errors the node
 // answers with are *module.Error; if none answers, the error's code is
 // module.CodeUnavailable.
-func (n *Network) Call(ctx context.Context, to module.Peer, ref string, body json.RawMessage) (json.RawMessage, error) {
+func (n *Network) Call(ctx context.Context, to Peer, ref string, body json.RawMessage) (json.RawMessage, error) {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, callTimeout)
@@ -74,7 +74,7 @@ func (n *Network) call(ctx context.Context, s *session, ref string, body json.Ra
 // session returns a session with the node to: one it has, or a new one.
 // Sessions through a relay are only used if to has no direct address, or
 // dialing it failed. Callers of the same node share its dial.
-func (n *Network) session(ctx context.Context, to module.Peer, ref string) (*session, error) {
+func (n *Network) session(ctx context.Context, to Peer, ref string) (*session, error) {
 	key := to.ID
 	if key == "" {
 		key = strings.Join(to.Addrs, " ")
@@ -112,13 +112,13 @@ func (n *Network) session(ctx context.Context, to module.Peer, ref string) (*ses
 }
 
 // direct reports whether to has a direct address.
-func direct(to module.Peer) bool {
+func direct(to Peer) bool {
 	return slices.ContainsFunc(to.Addrs, func(a string) bool { return !isRelay(a) })
 }
 
 // sessionTo returns a session with the node to, if any, preferring direct
 // ones to ones through a relay. n.mu must be held.
-func (n *Network) sessionTo(to module.Peer) *session {
+func (n *Network) sessionTo(to Peer) *session {
 	if to.ID != "" {
 		ss := n.sessions[to.ID]
 		if i := slices.IndexFunc(ss, func(s *session) bool { return !isRelay(s.addr) }); i >= 0 {
@@ -140,7 +140,7 @@ func (n *Network) sessionTo(to module.Peer) *session {
 }
 
 // dialSession dials a session at the first of to's addresses that answers.
-func (n *Network) dialSession(ctx context.Context, to module.Peer, ref string) (*session, error) {
+func (n *Network) dialSession(ctx context.Context, to Peer, ref string) (*session, error) {
 	var errs []error
 	for _, addr := range to.Addrs {
 		expect, err := expected(to, addr)
@@ -165,7 +165,7 @@ func (n *Network) dialSession(ctx context.Context, to module.Peer, ref string) (
 
 // expected returns the node a caller must reach at addr: to's, or the one a
 // relay address names.
-func expected(to module.Peer, addr string) (string, error) {
+func expected(to Peer, addr string) (string, error) {
 	if _, target, ok := relayAddr(addr); ok {
 		if to.ID != "" && target != to.ID {
 			return "", fmt.Errorf("%s: address of another node", addr)
@@ -185,9 +185,6 @@ func (n *Network) openSession(ctx context.Context, addr, expect string, pooled b
 	if ws.Subprotocol() != subprotocol {
 		ws.CloseNow()
 		return nil, fmt.Errorf("%.8s doesn't speak %s", answered, subprotocol)
-	}
-	if !isRelay(addr) {
-		n.remember(module.Peer{ID: answered, Addrs: []string{addr}})
 	}
 	return n.startSession(ws, answered, addr, true, pooled), nil
 }

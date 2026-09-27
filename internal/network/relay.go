@@ -16,8 +16,6 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-
-	"go-decentralized/module"
 )
 
 // Nodes that accept no connections, e.g. behind a NAT, stay reachable
@@ -84,9 +82,6 @@ func (n *Network) openRelay(ctx context.Context, relay, name, path string) (*web
 	start := time.Now()
 	ws, answered, err := n.connect(ctx, relay, "", path)
 	n.trace(ctx, "stream", name, relay, answered, start, err)
-	if err == nil {
-		n.remember(module.Peer{ID: answered, Addrs: []string{relay}})
-	}
 	return ws, err
 }
 

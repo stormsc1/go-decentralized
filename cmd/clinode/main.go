@@ -52,7 +52,7 @@ func main() {
 	c := &CLI{Node: n, Timeout: *timeout}
 
 	// A single command can be passed as arguments for scripting:
-	//   clinode discovery.discover_nodes recursive=false
+	//   clinode routing.list_nodes
 	if flag.NArg() > 0 {
 		if !c.Run(strings.Join(flag.Args(), " ")) {
 			os.Exit(1)

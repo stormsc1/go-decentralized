@@ -59,19 +59,13 @@ type Env struct {
 	// Call calls a capability of the node's own modules, by ref
 	// ("<module>.<capability>"), and decodes its result into out.
 	Call func(ctx context.Context, ref string, in, out any) error
-	// CallNode calls a capability of another node, over the network,
-	// directly or through a relay, and decodes its result into out.
-	CallNode func(ctx context.Context, to Peer, ref string, in, out any) error
+	// CallNode calls a capability of the node with the given ID, and decodes
+	// its result into out. The node finds the other node, and reaches it
+	// directly or through a relay.
+	CallNode func(ctx context.Context, id, ref string, in, out any) error
 	// Sign signs data with the node's key, for a purpose starting with the
-	// module's name, e.g. "discovery.record". See Verify.
+	// module's name, e.g. "greeter.token". See Verify.
 	Sign func(ctx context.Context, purpose string, data []byte) ([]byte, error)
-}
-
-// Peer is a node to call: its ID, which the node answering must prove if
-// set, and the addresses to try, in order.
-type Peer struct {
-	ID    string   `json:"id,omitempty"`
-	Addrs []string `json:"addrs,omitempty"`
 }
 
 type (

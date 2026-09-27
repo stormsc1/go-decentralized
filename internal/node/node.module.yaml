@@ -37,6 +37,7 @@ capabilities:
       type: object
       properties:
         network: {type: object}
+        routing: {type: object}
         modules: {type: object, additionalProperties: {type: object}}
 $defs:
   info:

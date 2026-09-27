@@ -1,4 +1,4 @@
-package discovery
+package routing
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"go-decentralized/modules/discovery/kademlia"
-	"go-decentralized/modules/discovery/mdns"
+	"go-decentralized/internal/routing/kademlia"
+	"go-decentralized/internal/routing/mdns"
 )
 
 // Nodes advertise themselves on the local network with multicast DNS, as an
@@ -23,24 +23,24 @@ const (
 
 // advertise answers mDNS queries for this node, which listens on port, until
 // ctx is done.
-func (m *Module) advertise(ctx context.Context, port int) {
+func (r *Routing) advertise(ctx context.Context, port int) {
 	// DNS labels are limited to 63 bytes, so the instance is an ID prefix;
 	// the full ID and the name go in TXT records.
 	err := mdns.Advertise(ctx, mdns.Service{
 		Type:     mdnsService,
-		Instance: m.id.String()[:16],
+		Instance: r.id.String()[:16],
 		Port:     port,
-		TXT:      []string{"id=" + m.id.String(), "name=" + m.env.NodeName},
+		TXT:      []string{"id=" + r.id.String(), "name=" + r.cfg.Name},
 	})
 	if err != nil {
-		slog.Warn("discovery: can't advertise on the local network", "err", err)
+		slog.Warn("routing: can't advertise on the local network", "err", err)
 	}
 }
 
 // watchLAN keeps the peers found on the local network up to date.
-func (m *Module) watchLAN(ctx context.Context) {
+func (r *Routing) watchLAN(ctx context.Context) {
 	for {
-		m.browseLAN(ctx)
+		r.browseLAN(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -52,10 +52,10 @@ func (m *Module) watchLAN(ctx context.Context) {
 // browseLAN finds the other nodes on the local network and keeps them as LAN
 // peers, which are reached directly at their LAN address even when they are
 // behind a NAT and in no routing table.
-func (m *Module) browseLAN(ctx context.Context) []kademlia.Contact {
+func (r *Routing) browseLAN(ctx context.Context) []kademlia.Contact {
 	found, err := mdns.Browse(ctx, mdnsService, time.Second)
 	if err != nil {
-		slog.Debug("discovery: can't browse the local network", "err", err)
+		slog.Debug("routing: can't browse the local network", "err", err)
 	}
 	lan := map[kademlia.ID]kademlia.Contact{}
 	for _, e := range found {
@@ -67,36 +67,25 @@ func (m *Module) browseLAN(ctx context.Context) []kademlia.Contact {
 				c.Name = name
 			}
 		}
-		if c.ID != m.id && c.ID != (kademlia.ID{}) {
+		if c.ID != r.id && c.ID != (kademlia.ID{}) {
 			lan[c.ID] = c
 		}
 	}
-	m.mu.Lock()
-	m.lan = lan
-	m.mu.Unlock()
+	r.mu.Lock()
+	r.lan = lan
+	r.mu.Unlock()
 	return slices.Collect(maps.Values(lan))
 }
 
-func (m *Module) lanPeers() []kademlia.Contact {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return slices.Collect(maps.Values(m.lan))
+func (r *Routing) lanPeers() []kademlia.Contact {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Collect(maps.Values(r.lan))
 }
 
-// findNode finds a node by ID. A peer on this node's LAN is tried at its LAN
-// address first, then at the addresses it advertises.
-func (m *Module) findNode(ctx context.Context, id kademlia.ID) (kademlia.Contact, bool, error) {
-	found, ok, err := m.dht.FindNode(ctx, id)
-	m.mu.Lock()
-	lan, onLAN := m.lan[id]
-	m.mu.Unlock()
-	if !onLAN {
-		return found, ok, err
-	}
-	if !ok {
-		return lan, true, nil
-	}
-	others := slices.DeleteFunc(slices.Clone(found.Addrs), func(a string) bool { return slices.Contains(lan.Addrs, a) })
-	found.Addrs = slices.Concat(lan.Addrs, others)
-	return found, true, nil
+func (r *Routing) lanPeer(id kademlia.ID) (kademlia.Contact, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, ok := r.lan[id]
+	return c, ok
 }

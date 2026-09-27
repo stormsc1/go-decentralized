@@ -1,12 +1,11 @@
 version: 1.0
 name: cli-node
 desc: Interactive terminal for triggering capabilities on the network
+network:
+  # Any node already in the network, to join through; no node is special.
+  bootstrap:
+    - ${BOOTSTRAP}
 modules:
-  - name: discovery
-    config:
-      # Any node already in the network; no node is special.
-      bootstrap:
-        - ${DISCOVERY_BOOTSTRAP}
   # Diagnostics: map_network, ping_node.
   - name: debug
   # Try: greeter.greet id=<a node running greeter>

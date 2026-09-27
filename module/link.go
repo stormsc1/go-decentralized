@@ -42,8 +42,9 @@ type Call struct {
 	// From is the ID of the node that made the call, as a node tells its
 	// process modules.
 	From string
-	// To is the node a process module's call is for, if not its own.
-	To *Peer
+	// To is the ID of the node a process module's call is for, if not its
+	// own.
+	To string
 }
 
 // meta is what a call carries besides its input, in params._meta.
@@ -51,7 +52,7 @@ type meta struct {
 	// Timeout is how long the caller waits, in milliseconds.
 	Timeout int64  `json:"timeout,omitempty"`
 	From    string `json:"from,omitempty"`
-	To      *Peer  `json:"to,omitempty"`
+	To      string `json:"to,omitempty"`
 }
 
 // message is a JSON-RPC 2.0 request, notification or response.

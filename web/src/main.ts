@@ -8,6 +8,7 @@ interface Report {
   direct: boolean
   observed?: string[]
   modules?: Record<string, { capabilities?: string[]; state?: any }>
+  routing?: { routing_table?: { id: string }[]; lan_peers?: { id: string }[] }
   error?: string
 }
 
@@ -199,15 +200,15 @@ function update(reports: Report[]) {
   }
   for (const r of reports) {
     const node = nodes.get(r.id) ?? ({ id: r.id } as Node)
-    const discovery = r.modules?.discovery?.state
+
     node.name = r.name ?? ''
     node.addrs = r.addrs ?? []
     node.direct = r.direct
     node.observed = r.observed ?? []
     node.error = r.error ?? ''
     node.modules = Object.keys(r.modules ?? {}).sort()
-    node.knows = ids(discovery?.routing_table)
-    node.lan = ids(discovery?.lan_peers)
+    node.knows = ids(r.routing?.routing_table)
+    node.lan = ids(r.routing?.lan_peers)
     nodes.set(r.id, node)
   }
 

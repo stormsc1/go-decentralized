@@ -25,11 +25,3 @@ The spec has no test suite, so another implementation can't check itself
 against it. Fix: a runner that drives any node over TLS and any process
 module over stdio, with golden messages and signatures.
 
-## Peers on the same LAN
-Nodes find their LAN peers via mDNS and reach them directly when looking
-them up by ID. Other lookups, such as capability providers, return the
-addresses a node advertises, so traffic between LAN peers found that way
-still goes through the relay.
-
-Fix: prefer a LAN peer's LAN address wherever its contact is used, e.g. in
-the network layer.

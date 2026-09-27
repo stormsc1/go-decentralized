@@ -8,14 +8,14 @@ Status: draft, version 1. Anything may change until it's frozen.
 |---|---|
 | [wire.md](wire.md) | Identity, TLS, addresses, messages, calls and relays between nodes |
 | [modules.md](modules.md) | Manifests, capabilities, what nodes give modules, runtimes |
-| [modules/discovery.md](modules/discovery.md) | The DHT behind the discovery module, and finding nodes on the local network |
+| [routing.md](routing.md) | How nodes find each other: the DHT, and the local network |
 | [module.schema.json](module.schema.json) | JSON Schema of `module.yaml` |
 
 ## Model
 
 - A **node** runs modules and carries their calls. Its ID is the SHA-256 of its Ed25519 public key.
 - A **module** declares **capabilities** in its manifest, each with JSON Schemas for its input and result, and handles calls to them. Modules never see the transport or the encoding.
-- A **capability** is named by its **ref**, `<module>.<capability>`, e.g. `discovery.find_node_by_id`. Its **access** is local (for the node itself) or network (for other nodes too).
+- A **capability** is named by its **ref**, `<module>.<capability>`, e.g. `greeter.hello`. Its **access** is local (for the node itself) or network (for other nodes too).
 - Everything that crosses a link, between nodes or between a node and a process module, is a **message**, in JSON-RPC 2.0: a call, how it ended, or its cancellation.
 
 ```

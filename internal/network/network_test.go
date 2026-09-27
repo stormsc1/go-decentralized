@@ -58,7 +58,7 @@ func listening(t *testing.T, relay RelayConfig) (*Network, string) {
 }
 
 // whoami calls test.whoami on to and returns who it saw calling.
-func whoami(ctx context.Context, from *Network, to module.Peer) (string, error) {
+func whoami(ctx context.Context, from *Network, to Peer) (string, error) {
 	result, err := from.Call(ctx, to, "test.whoami", nil)
 	var out struct{ ID string }
 	if err == nil {
@@ -73,14 +73,14 @@ func TestCallProvesBothEnds(t *testing.T) {
 	b, bAddr := listening(t, RelayConfig{})
 	c, _ := listening(t, RelayConfig{})
 
-	caller, err := whoami(ctx, a, module.Peer{ID: b.id, Addrs: []string{bAddr}})
+	caller, err := whoami(ctx, a, Peer{ID: b.id, Addrs: []string{bAddr}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if caller != a.id {
 		t.Fatalf("b saw the call come from %.8s, want %.8s", caller, a.id)
 	}
-	if _, err := whoami(ctx, a, module.Peer{ID: c.id, Addrs: []string{bAddr}}); module.Code(err) != module.CodeUnavailable {
+	if _, err := whoami(ctx, a, Peer{ID: c.id, Addrs: []string{bAddr}}); module.Code(err) != module.CodeUnavailable {
 		t.Fatalf("reaching b while expecting c: err = %v", err)
 	}
 
@@ -95,7 +95,7 @@ func TestCallsShareASession(t *testing.T) {
 	a, _ := listening(t, RelayConfig{})
 	b, bAddr := listening(t, RelayConfig{})
 	for range 3 {
-		if _, err := whoami(ctx, a, module.Peer{ID: b.id, Addrs: []string{bAddr}}); err != nil {
+		if _, err := whoami(ctx, a, Peer{ID: b.id, Addrs: []string{bAddr}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -112,10 +112,10 @@ func TestCalledBackOverItsSession(t *testing.T) {
 	ctx := context.Background()
 	client := testNetwork(t, 0, RelayConfig{})
 	server, serverAddr := listening(t, RelayConfig{})
-	if _, err := whoami(ctx, client, module.Peer{ID: server.id, Addrs: []string{serverAddr}}); err != nil {
+	if _, err := whoami(ctx, client, Peer{ID: server.id, Addrs: []string{serverAddr}}); err != nil {
 		t.Fatal(err)
 	}
-	seen, err := whoami(ctx, server, module.Peer{ID: client.id})
+	seen, err := whoami(ctx, server, Peer{ID: client.id})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestCalledBackOverItsSession(t *testing.T) {
 func TestErrorsComeBackAsSent(t *testing.T) {
 	a, _ := listening(t, RelayConfig{})
 	b, bAddr := listening(t, RelayConfig{})
-	_, err := a.Call(context.Background(), module.Peer{ID: b.id, Addrs: []string{bAddr}}, "test.missing", nil)
+	_, err := a.Call(context.Background(), Peer{ID: b.id, Addrs: []string{bAddr}}, "test.missing", nil)
 	if module.Code(err) != module.CodeNotFound {
 		t.Fatalf("err = %v, want code %s", err, module.CodeNotFound)
 	}
@@ -139,7 +139,7 @@ func TestRelayIsEndToEnd(t *testing.T) {
 	relay, relayAddr := listening(t, RelayConfig{Serve: true})
 	// target accepts no connections: it's only reachable through the relay.
 	target := testNetwork(t, 0, RelayConfig{Via: []string{relayAddr}})
-	go target.Run(ctx)
+	go target.Run(ctx, func() []Peer { return nil })
 	caller, _ := listening(t, RelayConfig{})
 
 	addr := waitFor(t, func() string {
@@ -153,7 +153,7 @@ func TestRelayIsEndToEnd(t *testing.T) {
 	if find(relay, relay.reservations, target.id) == nil {
 		t.Fatal("relay holds no reservation under target's proven ID")
 	}
-	seen, err := whoami(ctx, caller, module.Peer{ID: target.id, Addrs: []string{addr}})
+	seen, err := whoami(ctx, caller, Peer{ID: target.id, Addrs: []string{addr}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestRelayIsEndToEnd(t *testing.T) {
 func TestDialBack(t *testing.T) {
 	ctx := context.Background()
 	peer, peerAddr := listening(t, RelayConfig{})
-	peers := []module.Peer{{ID: peer.id, Addrs: []string{peerAddr}}}
+	peers := []Peer{{ID: peer.id, Addrs: []string{peerAddr}}}
 
 	reachable, _ := listening(t, RelayConfig{})
 	if !reachable.checkReachability(ctx, peers) || len(reachable.DirectAddrs()) != 1 {
@@ -182,9 +182,6 @@ func TestDialBack(t *testing.T) {
 	unreachable := testNetwork(t, 1, RelayConfig{}) // nothing listens on port 1
 	if !unreachable.checkReachability(ctx, peers) || len(unreachable.DirectAddrs()) != 0 {
 		t.Fatalf("node that doesn't listen is reachable at %v", unreachable.DirectAddrs())
-	}
-	if known := unreachable.peers(); len(known) != 1 || known[0].ID != peer.id {
-		t.Fatalf("peers to ask for dial-backs = %v, want the one that answered", known)
 	}
 }
 

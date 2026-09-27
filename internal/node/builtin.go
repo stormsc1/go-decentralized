@@ -50,13 +50,14 @@ func (n *Node) traces(_ context.Context, in tracesInput) (tracesOutput, error) {
 
 type inspectOutput struct {
 	Network network.Status `json:"network"`
+	Routing any            `json:"routing"`
 	Modules map[string]any `json:"modules"`
 }
 
 // inspect collects the state of the network and of every module that
 // reports one.
 func (n *Node) inspect(ctx context.Context, _ struct{}) (inspectOutput, error) {
-	out := inspectOutput{Network: n.Network.Status(), Modules: map[string]any{}}
+	out := inspectOutput{Network: n.Network.Status(), Routing: n.routing.Inspect(), Modules: map[string]any{}}
 	for _, l := range n.loadedModules() {
 		if i, ok := l.native.(module.Inspector); ok {
 			out.Modules[l.manifest.Name] = i.Inspect()

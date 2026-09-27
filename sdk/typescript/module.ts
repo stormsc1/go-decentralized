@@ -6,11 +6,6 @@
 
 import { createInterface } from 'node:readline'
 
-export interface Peer {
-  id?: string
-  addrs?: string[]
-}
-
 // Env is what a module gets from the node it runs in.
 export interface Env {
   nodeId: string
@@ -18,8 +13,9 @@ export interface Env {
   // call calls a capability ("<module>.<capability>") of the node's own
   // modules, and resolves to its result.
   call(ref: string, input?: object): Promise<any>
-  // callNode calls a capability of another node, over the network.
-  callNode(to: Peer, ref: string, input?: object): Promise<any>
+  // callNode calls a capability of the node with the given ID. The node
+  // finds it, and reaches it directly or through a relay.
+  callNode(id: string, ref: string, input?: object): Promise<any>
   // sign signs data with the node's key, for a purpose starting with the
   // module's name.
   sign(purpose: string, data: Uint8Array): Promise<Uint8Array>
@@ -57,7 +53,7 @@ export class ModuleError extends Error {
 interface Meta {
   timeout?: number
   from?: string
-  to?: Peer
+  to?: string
 }
 
 // rpcCodes are the JSON-RPC codes of the error codes that have one.
@@ -90,7 +86,7 @@ export function serve(start: (config: any, env: Env) => Module | Promise<Module>
     nodeId: node.id,
     nodeName: node.name,
     call: (ref, input) => call(ref, input),
-    callNode: (to, ref, input) => call(ref, input, { to }),
+    callNode: (id, ref, input) => call(ref, input, { to: id }),
     sign: async (purpose, data) => {
       const out = await call('node.sign', { purpose, data: Buffer.from(data).toString('base64') })
       return Buffer.from(out.signature, 'base64')

@@ -3,11 +3,12 @@ package kademlia
 import (
 	"context"
 
+	"go-decentralized/internal/network"
 	"go-decentralized/module"
 )
 
-// The DHT's capabilities, which DHT nodes call on each other. See the
-// discovery module's module.yaml.
+// The DHT's capabilities, which DHT nodes call on each other. See
+// internal/routing/routing.module.yaml.
 const (
 	capFindNode      = "dht_find_node"
 	capFindProviders = "dht_find_providers"
@@ -65,7 +66,7 @@ func (d *DHT) handler(h func(request) response) module.Handler {
 }
 
 // call calls one of the DHT's capabilities on the node at to.
-func (d *DHT) call(ctx context.Context, to module.Peer, name string, req request) (response, error) {
+func (d *DHT) call(ctx context.Context, to network.Peer, name string, req request) (response, error) {
 	req.From = d.self()
 	var resp response
 	if err := d.cfg.Call(ctx, to, name, req, &resp); err != nil {
@@ -79,6 +80,6 @@ func (d *DHT) call(ctx context.Context, to module.Peer, name string, req request
 	return resp, nil
 }
 
-func peerOf(c Contact) module.Peer {
-	return module.Peer{ID: c.ID.String(), Addrs: c.Addrs}
+func peerOf(c Contact) network.Peer {
+	return network.Peer{ID: c.ID.String(), Addrs: c.Addrs}
 }

@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=../../spec/module.schema.json
-name: discovery
+name: routing
 version: 1.0.0
-description: Finds nodes, and the nodes that provide a capability, over a Kademlia DHT, without a central registry.
+description: Finds nodes, and the nodes that provide a capability, over a Kademlia DHT and on the local network, without a central registry. Built into nodes. See spec/routing.md.
 capabilities:
   - name: list_nodes
     description: Lists the nodes this node knows, not the whole network (see debug.map_network).
@@ -9,15 +9,15 @@ capabilities:
       type: object
       properties:
         nodes: {type: array, items: {$ref: "#/$defs/node"}}
-  - name: find_node_by_id
-    description: Finds the node with the given ID.
+  - name: find_node
+    description: Finds the node with the given ID, and how to reach it.
     input:
       type: object
       required: [id]
       properties:
         id: {$ref: "#/$defs/id"}
     output: {$ref: "#/$defs/node"}
-  - name: find_capability_providers
+  - name: find_providers
     description: Finds the nodes that provide a capability, e.g. capability=debug.report.
     input:
       type: object
@@ -29,7 +29,7 @@ capabilities:
       properties:
         providers: {type: array, items: {$ref: "#/$defs/node"}}
 
-  # The DHT's protocol, between discovery modules. See spec/modules/discovery.md.
+  # The DHT's protocol, between nodes. See spec/routing.md.
   - name: dht_find_node
     description: Returns the contacts this node knows closest to target.
     access: network
@@ -53,7 +53,7 @@ $defs:
   id:
     type: string
     pattern: "^[0-9a-f]{64}$"
-    description: A node ID, or a key in the DHT, in hex. See spec/modules/discovery.md.
+    description: A node ID, or a key in the DHT, in hex. See spec/routing.md.
   node:
     type: object
     required: [id]
@@ -77,7 +77,7 @@ $defs:
   record:
     type: object
     required: [data, sig]
-    description: A node's self-signed record. sig signs data, as is, for the purpose "discovery.record".
+    description: A node's self-signed record. sig signs data, as is, for the purpose "routing.record".
     properties:
       data: {type: string, contentEncoding: base64, contentMediaType: application/json, contentSchema: {$ref: "#/$defs/record_data"}}
       sig: {type: string, contentEncoding: base64}

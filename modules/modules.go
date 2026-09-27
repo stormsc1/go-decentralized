@@ -5,13 +5,11 @@ package modules
 import (
 	"go-decentralized/module"
 	"go-decentralized/modules/debug"
-	"go-decentralized/modules/discovery"
 	"go-decentralized/modules/greeter"
 )
 
 // Factories maps module names (as used in *.node.yaml) to their constructors.
 var Factories = map[string]module.Factory{
-	debug.Name:     debug.New,
-	discovery.Name: discovery.New,
-	greeter.Name:   greeter.New,
+	debug.Name:   debug.New,
+	greeter.Name: greeter.New,
 }

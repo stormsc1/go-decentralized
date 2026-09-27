@@ -103,8 +103,8 @@ func (s *server) start(input json.RawMessage) (json.RawMessage, error) {
 		Call: func(ctx context.Context, ref string, in, out any) error {
 			return s.call(ctx, Call{Ref: ref}, in, out)
 		},
-		CallNode: func(ctx context.Context, to Peer, ref string, in, out any) error {
-			return s.call(ctx, Call{Ref: ref, To: &to}, in, out)
+		CallNode: func(ctx context.Context, id, ref string, in, out any) error {
+			return s.call(ctx, Call{Ref: ref, To: id}, in, out)
 		},
 		Sign: func(ctx context.Context, purpose string, data []byte) ([]byte, error) {
 			var out struct {

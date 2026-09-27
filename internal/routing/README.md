@@ -1,10 +1,10 @@
-# Discovery Module
+# Routing
 
 Finds nodes without a central authority, using a [Kademlia](https://www.scs.stanford.edu/~dm/home/papers/kpos.pdf) DHT (as in BitTorrent and IPFS).
 
 Why Kademlia? Because it's highly fault-tolerant and lookups are only O(log n) of n nodes, making it efficient for large networks.
 
-Protocol, for other implementations: [spec/modules/discovery.md](../../spec/modules/discovery.md).
+Protocol, for other implementations: [spec/routing.md](../../spec/routing.md).
 
 ## First Contact
 

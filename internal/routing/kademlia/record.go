@@ -11,7 +11,7 @@ import (
 )
 
 // recordPurpose is what records are signed for, see module.Verify.
-const recordPurpose = "discovery.record"
+const recordPurpose = "routing.record"
 
 // Record is a node's self-signed description: its key, name and every
 // address it can be reached at, including indirect ones such as relays. Only
