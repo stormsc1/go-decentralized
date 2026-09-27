@@ -55,7 +55,7 @@ modules:
 - **On Cloud Run,** a replica makes a new key at start, so its node ID changes on every start.
 
 **Needed**
-- **A node-local store.** Every node has its own local store for its own state: peers, routing table and caches. Built-in modules use it, and it's never shared. It's a SQLite file, or memory where nothing persists, such as on Cloud Run.
+- **A node-local store** (built). Every node has `local`, for its own state, which modules can't bind to, so it's never shared. Routing remembers its peers there. It's a SQLite file in the data directory, or memory without one, as on Cloud Run.
 - **Concurrent writers.** Every driver supports batches and conditional writes. SQLite files can't be shared between machines, so pools need a networked database; Postgres first.
 - **Events across the pool.** An app subscribed on member 3 must hear events emitted on member 7. Cloud Run instances can't reach each other directly, so events go through the pool's shared store, e.g. Postgres `LISTEN`/`NOTIFY`.
 - **Once-per-pool work.** Some background work must run once per pool, not on every member, e.g. syncing a channel with another organisation. Members take leases in the shared store.
