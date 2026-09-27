@@ -1,6 +1,6 @@
 # Identity, storage and chat
 
-Status: draft for review, from the design Q&A on 2026-09-27. Storage, events and `did:key` with device keys are built; the rest isn't. **Open** marks what's still to decide.
+Status: draft for review, from the design Q&A on 2026-09-27. Storage, events, `did:key` with device keys, and the chat's event graph (`modules/chat/graph`) are built; the rest isn't. **Open** marks what's still to decide.
 
 The first app on the platform is a realtime chat. It's small enough to build soon, and it exercises what the platform lacks: identities for people, storage, pushed events and data copied between nodes.
 
