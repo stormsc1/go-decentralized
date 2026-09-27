@@ -24,7 +24,7 @@ type Config struct {
 	// Bootstrap are addresses (host:port) of any nodes already in the network.
 	Bootstrap []string `yaml:"bootstrap"`
 	// MDNS advertises this node and finds bootstrap nodes on the local
-	// network. Defaults to true.
+	// network, with multicast DNS. Defaults to true.
 	MDNS bool `yaml:"mdns"`
 	// Refresh is how often the routing table is refreshed. Defaults to 1m.
 	Refresh time.Duration `yaml:"refresh"`
@@ -129,17 +129,12 @@ func (m *Module) Inspect() any {
 }
 
 func (m *Module) Run(ctx context.Context) {
-	if port := m.info().ListenPort; m.cfg.MDNS && port != 0 {
-		stop, err := advertise(kademlia.Contact{ID: m.id, Name: m.env.NodeName}, port)
-		if err != nil {
-			slog.Warn("discovery: mdns advertise failed", "err", err)
-		} else {
-			defer stop()
-		}
-	}
 	var wg sync.WaitGroup
 	wg.Go(func() { m.dht.Run(ctx) })
 	if m.cfg.MDNS {
+		if port := m.info().ListenPort; port != 0 {
+			wg.Go(func() { m.advertise(ctx, port) })
+		}
 		wg.Go(func() { m.watchLAN(ctx) })
 	}
 	wg.Wait()
@@ -171,15 +166,13 @@ func (m *Module) provides() []string {
 	return refs
 }
 
-// bootstrap returns the configured bootstrap nodes plus any found via mDNS,
-// other than this one.
+// bootstrap returns the configured bootstrap nodes plus any found on the
+// local network.
 func (m *Module) bootstrap(ctx context.Context) []string {
 	addrs := slices.Clone(m.cfg.Bootstrap)
 	if m.cfg.MDNS {
 		for _, c := range m.browseLAN(ctx) {
-			if c.ID != m.id {
-				addrs = append(addrs, c.Addrs...)
-			}
+			addrs = append(addrs, c.Addrs...)
 		}
 	}
 	return addrs

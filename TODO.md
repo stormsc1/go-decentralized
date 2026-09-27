@@ -7,13 +7,6 @@ impostor from reading or altering traffic, but it could drop it.
 
 Fix: put the relay's ID in relay addresses, and verify it too.
 
-## yamux in relays
-Relay reservations multiplex relayed connections with yamux, the one
-non-standard protocol left, with few libraries outside Go and Rust.
-
-Fix: the relay tells the node about each incoming connection over its
-reservation, and the node opens a WebSocket back to the relay to take it.
-
 ## Streams and events
 Messages only carry calls and their ends. Progress, logs and events between
 modules need `item` and `event` messages, with flow control per call on

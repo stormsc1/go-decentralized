@@ -12,7 +12,7 @@ import (
 	"go-decentralized/internal/network"
 )
 
-// Config is a node definition, e.g. infra/gl-organization.node.yaml.
+// Config is a node definition.
 type Config struct {
 	Version string         `yaml:"version"`
 	Name    string         `yaml:"name"`

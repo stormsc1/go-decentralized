@@ -69,11 +69,12 @@ An error is a JSON-RPC error whose `data.code` is one of these, or a module's ow
 
 ## Relays
 
-Nodes that accept no connections, e.g. behind NAT, stay reachable through a relay: a node configured to serve as one. Relayed WebSockets carry raw bytes, in binary messages.
+Nodes that accept no connections, e.g. behind NAT, stay reachable through a relay: a node configured to serve as one.
 
-1. The node opens a WebSocket at `/v1/relay/reserve` on the relay. The relay keys the reservation by the ID the node proved, and holds it while the WebSocket lasts. Over it, the two run [yamux](https://github.com/hashicorp/yamux/blob/master/spec.md), the relay as client. The node advertises `relay/<relay host:port>/<its ID>`.
-2. A caller opens a WebSocket at `/v1/relay/connect?id=<target ID>` on the relay. The relay opens a yamux stream to the target over its reservation, and splices the two. It answers 404 if it holds no reservation for the target.
-3. The caller runs TLS over the spliced stream, end to end with the target, and opens a session over it. The relay only sees ciphertext.
+1. The node opens a WebSocket at `/v1/relay/reserve` on the relay, and pings it every 30 seconds. The relay keys the reservation by the ID the node proved, and holds it while the WebSocket lasts. The node advertises `relay/<relay host:port>/<its ID>`.
+2. A caller opens a WebSocket at `/v1/relay/connect?id=<target ID>`. The relay answers 404 if it holds no reservation for the target. Otherwise it names the connection and tells the target over its reservation, in a text message: `{"connection": "<name>"}`.
+3. The target opens a WebSocket at `/v1/relay/accept?connection=<name>`, which only it may do. The relay then completes the caller's WebSocket and splices the two, which carry raw bytes, in binary messages. It answers the caller 504 if the target doesn't take the connection within 10 seconds.
+4. The caller runs TLS over the spliced connection, end to end with the target, and opens a session over it. The relay only sees ciphertext.
 
 Relays don't prove their identity to callers yet. End-to-end TLS keeps a fake relay from reading or altering traffic, but not from dropping it.
 

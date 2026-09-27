@@ -1,15 +1,13 @@
 package module
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
-	"log"
+	"strconv"
 	"sync"
 	"time"
-
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 // A link carries calls both ways between two ends, as JSON-RPC 2.0: between
@@ -18,11 +16,23 @@ import (
 // params are the input; its end is the response. What else a call needs
 // travels in params._meta. See spec/wire.md.
 type Link struct {
-	conn *jsonrpc2.Conn
+	stream Stream
+	handle func(ctx context.Context, call Call) (json.RawMessage, error)
+	done   chan struct{}
 
+	wmu     sync.Mutex
 	mu      sync.Mutex
 	next    uint64
-	running map[jsonrpc2.ID]context.CancelFunc // the other end's calls, while handled
+	closed  bool
+	pending map[uint64]chan message       // our calls, until they end
+	running map[string]context.CancelFunc // the other end's, while handled, by ID
+}
+
+// Stream carries whole JSON-RPC messages.
+type Stream interface {
+	Read() ([]byte, error)
+	Write([]byte) error
+	Close() error
 }
 
 // Call is a call as a link carries it.
@@ -44,6 +54,16 @@ type meta struct {
 	To      *Peer  `json:"to,omitempty"`
 }
 
+// message is a JSON-RPC 2.0 request, notification or response.
+type message struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id,omitempty"`
+	Method  string          `json:"method,omitempty"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *rpcError       `json:"error,omitempty"`
+}
+
 // cancelMethod is the notification that cancels a call, as in LSP.
 const cancelMethod = "$/cancelRequest"
 
@@ -51,24 +71,126 @@ const cancelMethod = "$/cancelRequest"
 // nodes, encoded.
 const MaxMessage = 1 << 20
 
-// NewLink returns a link over stream, until ctx is done or the stream
-// closes. handle handles the calls the other end makes.
-func NewLink(ctx context.Context, stream jsonrpc2.ObjectStream, handle func(ctx context.Context, call Call) (json.RawMessage, error)) *Link {
-	l := &Link{running: map[jsonrpc2.ID]context.CancelFunc{}}
-	l.conn = jsonrpc2.NewConn(ctx, stream, jsonrpc2.AsyncHandler(handler{l, handle}),
-		jsonrpc2.SetLogger(log.New(io.Discard, "", 0)))
+// NewLink returns a link over stream, until ctx is done or the stream ends.
+// handle handles the calls the other end makes.
+func NewLink(ctx context.Context, stream Stream, handle func(ctx context.Context, call Call) (json.RawMessage, error)) *Link {
+	l := &Link{
+		stream:  stream,
+		handle:  handle,
+		done:    make(chan struct{}),
+		pending: map[uint64]chan message{},
+		running: map[string]context.CancelFunc{},
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	context.AfterFunc(ctx, func() { l.Close() })
+	go func() {
+		defer cancel()
+		for {
+			data, err := stream.Read()
+			if err != nil {
+				return
+			}
+			var m message
+			if err := json.Unmarshal(data, &m); err != nil {
+				l.reply(json.RawMessage("null"), nil, Errorf(CodeInvalidArgument, "not a JSON-RPC message: %v", err))
+				continue
+			}
+			l.receive(ctx, m)
+		}
+	}()
 	return l
 }
 
-// NewStdioLink returns a link over a process's stdio: newline-delimited
-// JSON read from r and written to w.
-func NewStdioLink(ctx context.Context, r io.Reader, w io.WriteCloser, handle func(ctx context.Context, call Call) (json.RawMessage, error)) *Link {
-	return NewLink(ctx, jsonrpc2.NewBufferedStream(stdio{r, w}, jsonrpc2.PlainObjectCodec{}), handle)
+// NewStdioStream returns a stream over a process's stdio: one message per
+// line, read from r and written to w.
+func NewStdioStream(r io.Reader, w io.WriteCloser) Stream {
+	return &stdio{json.NewDecoder(r), w}
 }
 
 type stdio struct {
-	io.Reader
-	io.WriteCloser
+	r *json.Decoder
+	w io.WriteCloser
+}
+
+func (s *stdio) Read() ([]byte, error) {
+	var m json.RawMessage
+	err := s.r.Decode(&m)
+	return m, err
+}
+
+func (s *stdio) Write(m []byte) error {
+	_, err := s.w.Write(append(m, '\n'))
+	return err
+}
+
+func (s *stdio) Close() error { return s.w.Close() }
+
+// receive handles a message from the other end.
+func (l *Link) receive(ctx context.Context, m message) {
+	switch {
+	case m.Method != "" && m.ID == nil: // a notification
+		var cancel struct{ ID json.RawMessage }
+		if m.Method == cancelMethod && json.Unmarshal(m.Params, &cancel) == nil {
+			l.mu.Lock()
+			stop := l.running[string(cancel.ID)]
+			l.mu.Unlock()
+			if stop != nil {
+				stop()
+			}
+		}
+	case m.Method != "": // a call
+		l.serve(ctx, m)
+	default: // an end
+		id, err := strconv.ParseUint(string(m.ID), 10, 64)
+		if err != nil {
+			return
+		}
+		l.mu.Lock()
+		ch := l.pending[id]
+		delete(l.pending, id)
+		l.mu.Unlock()
+		if ch != nil {
+			ch <- m
+		}
+	}
+}
+
+// serve handles a call from the other end, and answers it.
+func (l *Link) serve(ctx context.Context, m message) {
+	input, meta, err := splitMeta(m.Params)
+	if err != nil {
+		l.reply(m.ID, nil, Errorf(CodeInvalidArgument, "params: %v", err))
+		return
+	}
+	var cancel context.CancelFunc
+	if meta.Timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(meta.Timeout)*time.Millisecond)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
+	key := string(m.ID)
+	l.mu.Lock()
+	l.running[key] = cancel
+	l.mu.Unlock()
+	go func() {
+		defer cancel()
+		result, err := l.handle(ctx, Call{Ref: m.Method, Input: input, From: meta.From, To: meta.To})
+		l.mu.Lock()
+		delete(l.running, key)
+		l.mu.Unlock()
+		l.reply(m.ID, result, err)
+	}()
+}
+
+// reply ends the call with the given ID.
+func (l *Link) reply(id, result json.RawMessage, err error) {
+	m := message{JSONRPC: "2.0", ID: id}
+	if err != nil {
+		m.Error = toRPC(ErrorOf(err))
+	} else if m.Result = result; len(result) == 0 {
+		m.Result = json.RawMessage("{}")
+	}
+	_ = l.send(m)
 }
 
 // Call makes a call and waits for it to end. It tells the other end how long
@@ -82,88 +204,69 @@ func (l *Link) Call(ctx context.Context, call Call) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
+	ch := make(chan message, 1)
 	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return nil, Errorf(CodeUnavailable, "link closed")
+	}
 	l.next++
-	id := jsonrpc2.ID{Num: l.next}
+	id := l.next
+	l.pending[id] = ch
 	l.mu.Unlock()
-	w, err := l.conn.DispatchCall(ctx, call.Ref, params, jsonrpc2.PickID(id))
-	if err != nil {
+
+	rawID := json.RawMessage(strconv.FormatUint(id, 10))
+	if err := l.send(message{JSONRPC: "2.0", ID: rawID, Method: call.Ref, Params: params}); err != nil {
+		l.forget(id)
 		return nil, Errorf(CodeUnavailable, "%v", err)
 	}
-	var result json.RawMessage
-	err = w.Wait(ctx, &result)
-	var rpcErr *jsonrpc2.Error
-	switch {
-	case err == nil:
-		return result, nil
-	case errors.As(err, &rpcErr):
-		return nil, fromRPC(rpcErr)
-	case ctx.Err() != nil:
-		_ = l.conn.Notify(context.Background(), cancelMethod, map[string]jsonrpc2.ID{"id": id})
+	select {
+	case end := <-ch:
+		if end.Error != nil {
+			return nil, end.Error.module()
+		}
+		return end.Result, nil
+	case <-ctx.Done():
+		l.forget(id)
+		cancel, _ := json.Marshal(map[string]json.RawMessage{"id": rawID})
+		_ = l.send(message{JSONRPC: "2.0", Method: cancelMethod, Params: cancel})
 		return nil, ErrorOf(ctx.Err())
 	}
-	return nil, Errorf(CodeUnavailable, "%v", err)
 }
 
 // Done is closed once the link is.
-func (l *Link) Done() <-chan struct{} { return l.conn.DisconnectNotify() }
+func (l *Link) Done() <-chan struct{} { return l.done }
 
-func (l *Link) Close() error { return l.conn.Close() }
-
-// handler handles what the other end sends: its calls, and its
-// cancellations.
-type handler struct {
-	l      *Link
-	handle func(ctx context.Context, call Call) (json.RawMessage, error)
+// Close closes the link and its stream. Calls waiting for their end fail.
+func (l *Link) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return nil
+	}
+	l.closed = true
+	for id, ch := range l.pending {
+		ch <- message{Error: toRPC(Errorf(CodeUnavailable, "link closed"))}
+		delete(l.pending, id)
+	}
+	close(l.done)
+	return l.stream.Close()
 }
 
-func (h handler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	if req.Notif {
-		var cancel struct{ ID jsonrpc2.ID }
-		if req.Method == cancelMethod && req.Params != nil && json.Unmarshal(*req.Params, &cancel) == nil {
-			h.l.mu.Lock()
-			stop := h.l.running[cancel.ID]
-			h.l.mu.Unlock()
-			if stop != nil {
-				stop()
-			}
-		}
-		return // other notifications are for later versions
-	}
-	var params json.RawMessage
-	if req.Params != nil {
-		params = *req.Params
-	}
-	input, m, err := splitMeta(params)
+func (l *Link) send(m message) error {
+	data, err := json.Marshal(m)
 	if err != nil {
-		_ = conn.ReplyWithError(ctx, req.ID, toRPC(Errorf(CodeInvalidArgument, "params: %v", err)))
-		return
+		return err
 	}
-	var cancel context.CancelFunc
-	if m.Timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(m.Timeout)*time.Millisecond)
-	} else {
-		ctx, cancel = context.WithCancel(ctx)
-	}
-	defer cancel()
-	h.l.mu.Lock()
-	h.l.running[req.ID] = cancel
-	h.l.mu.Unlock()
-	defer func() {
-		h.l.mu.Lock()
-		delete(h.l.running, req.ID)
-		h.l.mu.Unlock()
-	}()
+	l.wmu.Lock()
+	defer l.wmu.Unlock()
+	return l.stream.Write(data)
+}
 
-	result, err := h.handle(ctx, Call{Ref: req.Method, Input: input, From: m.From, To: m.To})
-	if err != nil {
-		_ = conn.ReplyWithError(ctx, req.ID, toRPC(ErrorOf(err)))
-		return
-	}
-	if len(result) == 0 {
-		result = json.RawMessage("{}")
-	}
-	_ = conn.Reply(ctx, req.ID, result)
+func (l *Link) forget(id uint64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.pending, id)
 }
 
 // withMeta returns input, an object, with m as its _meta.
@@ -187,7 +290,7 @@ func withMeta(input json.RawMessage, m meta) (json.RawMessage, error) {
 // splitMeta splits params into the call's input and its _meta.
 func splitMeta(params json.RawMessage) (json.RawMessage, meta, error) {
 	var m meta
-	if len(params) == 0 {
+	if len(bytes.TrimSpace(params)) == 0 {
 		return json.RawMessage("{}"), m, nil
 	}
 	fields := map[string]json.RawMessage{}

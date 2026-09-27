@@ -2,11 +2,8 @@ package module
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 // Error is why a call failed: a code, for programs, and a message, for
@@ -64,38 +61,48 @@ func Code(err error) string {
 	return ErrorOf(err).Code
 }
 
-// toRPC returns e as a JSON-RPC error: the code in its data, and the closest
-// JSON-RPC code in its code.
-func toRPC(e *Error) *jsonrpc2.Error {
-	code := int64(-32000) // a server error
-	switch e.Code {
-	case CodeInvalidArgument:
-		code = jsonrpc2.CodeInvalidParams
-	case CodeUnimplemented:
-		code = jsonrpc2.CodeMethodNotFound
-	}
-	err := &jsonrpc2.Error{Code: code, Message: e.Error()}
-	err.SetError(map[string]string{"code": e.Code})
-	return err
+// JSON-RPC's own error codes.
+const (
+	rpcParseError     = -32700
+	rpcInvalidRequest = -32600
+	rpcMethodNotFound = -32601
+	rpcInvalidParams  = -32602
+	rpcServerError    = -32000
+)
+
+// rpcError is an Error as JSON-RPC carries it: the code in its data, and the
+// closest JSON-RPC code in its code, for generic JSON-RPC clients.
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		Code string `json:"code,omitempty"`
+	} `json:"data"`
 }
 
-// fromRPC returns a JSON-RPC error as an *Error.
-func fromRPC(e *jsonrpc2.Error) *Error {
-	var data struct {
-		Code string `json:"code"`
+func toRPC(e *Error) *rpcError {
+	r := &rpcError{Code: rpcServerError, Message: e.Error()}
+	switch e.Code {
+	case CodeInvalidArgument:
+		r.Code = rpcInvalidParams
+	case CodeUnimplemented:
+		r.Code = rpcMethodNotFound
 	}
-	if e.Data != nil {
-		_ = json.Unmarshal(*e.Data, &data)
-	}
-	if data.Code == "" {
-		switch e.Code {
-		case jsonrpc2.CodeMethodNotFound:
-			data.Code = CodeUnimplemented
-		case jsonrpc2.CodeInvalidParams, jsonrpc2.CodeInvalidRequest, jsonrpc2.CodeParseError:
-			data.Code = CodeInvalidArgument
+	r.Data.Code = e.Code
+	return r
+}
+
+func (r *rpcError) module() *Error {
+	code := r.Data.Code
+	if code == "" {
+		switch r.Code {
+		case rpcMethodNotFound:
+			code = CodeUnimplemented
+		case rpcInvalidParams, rpcInvalidRequest, rpcParseError:
+			code = CodeInvalidArgument
 		default:
-			data.Code = CodeUnknown
+			code = CodeUnknown
 		}
 	}
-	return &Error{Code: data.Code, Message: e.Message}
+	return &Error{Code: code, Message: r.Message}
 }

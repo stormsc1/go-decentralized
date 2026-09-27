@@ -15,7 +15,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/hashicorp/yamux"
+	"github.com/coder/websocket"
 
 	"go-decentralized/module"
 )
@@ -46,14 +46,15 @@ type Network struct {
 
 	mu           sync.Mutex
 	handler      Handler
-	sessions     map[string][]*session     // open sessions, by peer ID
-	dialing      map[string]*dialing       // sessions being dialed, by peer
-	reachable    []string                  // direct addresses confirmed by dial-back
-	observed     []string                  // public IPs peers saw this node at
-	relayed      []string                  // addresses through relays holding a reservation for us
-	known        []module.Peer             // peers that answered at a direct address, newest first
-	reservations map[string]*yamux.Session // held here, as a relay, by node ID
-	traces       []Trace                   // what this node sent, oldest first
+	sessions     map[string][]*session      // open sessions, by peer ID
+	dialing      map[string]*dialing        // sessions being dialed, by peer
+	reachable    []string                   // direct addresses confirmed by dial-back
+	observed     []string                   // public IPs peers saw this node at
+	relayed      []string                   // addresses through relays holding a reservation for us
+	known        []module.Peer              // peers that answered at a direct address, newest first
+	reservations map[string]*websocket.Conn // held here, as a relay, by node ID
+	waiting      map[string]*waiting        // callers' connections, until their node takes them
+	traces       []Trace                    // what this node sent, oldest first
 }
 
 //go:embed network.module.yaml
@@ -73,7 +74,8 @@ func New(cfg Config) (*Network, error) {
 		cert:         cert,
 		sessions:     map[string][]*session{},
 		dialing:      map[string]*dialing{},
-		reservations: map[string]*yamux.Session{},
+		reservations: map[string]*websocket.Conn{},
+		waiting:      map[string]*waiting{},
 	}
 	return n, nil
 }

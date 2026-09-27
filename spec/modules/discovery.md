@@ -34,9 +34,17 @@ A lookup is iterative. It calls the α closest contacts it hasn't asked yet, mer
 
 ## Joining and announcing
 
-- A node joins by calling `dht_find_node` for its own ID on any node it knows: a configured bootstrap address, or a peer found by mDNS. Then it looks up its own ID, and does so again every minute.
+- A node joins by calling `dht_find_node` for its own ID on any node it knows: a configured bootstrap address, or a peer found on the local network (see "mDNS"). Then it looks up its own ID, and does so again every minute.
 - Every 10 minutes, and whenever its addresses change, a node stores its record on the K nodes closest to its own ID, so it can be found by ID even in client mode. It also stores it on the K nodes closest to the key of every capability it provides: those with network access that aren't internal.
 
 ## mDNS
 
-Nodes advertise `_go-decentralized._tcp` on the local network, with the TXT records `id=<id>` and `name=<name>`, and browse for it every 30 seconds. Peers found this way serve as bootstrap nodes, and are tried at their LAN address first when looked up by ID.
+Nodes find each other on the local network with multicast DNS service discovery ([RFC 6762](https://www.rfc-editor.org/rfc/rfc6762), [RFC 6763](https://www.rfc-editor.org/rfc/rfc6763)). A studio's nodes find each other with no configuration, even without internet.
+
+A node that accepts connections answers queries for the service `_go-decentralized._tcp.local` on 224.0.0.251, port 5353:
+
+- Its instance is the first 16 hex digits of its ID: `<instance>._go-decentralized._tcp.local`.
+- The answer is the service's PTR record, naming the instance. Additional records give the rest: an SRV record with the port it accepts connections on, at `<instance>.local`; a TXT record with `id=<its ID>` and `name=<its name>`; and an A record for each of its IPv4 addresses, other than loopback ones.
+- A query from port 5353 gets its answer by multicast, with records that live 120 seconds. Any other query is one-shot, and gets its answer directly, with its ID and question, and records that live 10 seconds (RFC 6762, section 6.7).
+
+Every 30 seconds, a node asks for the service's PTR records with a one-shot query, and keeps the nodes that answer within a second, at their LAN addresses, `<A>:<SRV port>`. These LAN peers serve as bootstrap nodes, and are tried at their LAN address first when looked up by ID.

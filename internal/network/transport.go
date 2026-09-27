@@ -19,6 +19,7 @@ const (
 	sessionPath      = "/v1/session"
 	reservePath      = "/v1/relay/reserve"
 	connectPath      = "/v1/relay/connect"
+	acceptPath       = "/v1/relay/accept"
 	dialTimeout      = 3 * time.Second
 	handshakeTimeout = 10 * time.Second
 	// subprotocol is the WebSocket subprotocol of sessions, and its
@@ -113,6 +114,7 @@ func (n *Network) serve(l net.Listener) error {
 	if n.cfg.Relay.Serve {
 		mux.HandleFunc("GET "+reservePath, n.serveReserve)
 		mux.HandleFunc("GET "+connectPath, n.serveConnect)
+		mux.HandleFunc("GET "+acceptPath, n.serveAccept)
 	}
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	return srv.Serve(tls.NewListener(l, n.tlsConfig("")))

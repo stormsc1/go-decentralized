@@ -33,7 +33,7 @@ func Serve(newModule Factory) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s := &server{ctx: ctx, newModule: newModule}
-	s.link = NewStdioLink(ctx, os.Stdin, out, s.handle)
+	s.link = NewLink(ctx, NewStdioStream(os.Stdin, out), s.handle)
 	<-s.link.Done()
 	cancel()
 	s.wg.Wait()

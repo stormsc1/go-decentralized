@@ -69,7 +69,7 @@ func (p *process) start() (module.Manifest, error) {
 	if err := cmd.Start(); err != nil {
 		return module.Manifest{}, err
 	}
-	link := module.NewStdioLink(context.Background(), stdout, stdin, p.handle)
+	link := module.NewLink(context.Background(), module.NewStdioStream(stdout, stdin), p.handle)
 	exited := make(chan struct{})
 	go func() {
 		defer close(exited)

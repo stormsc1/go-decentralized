@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 
 	"go-decentralized/module"
 )
@@ -270,6 +269,13 @@ func (n *Network) closeSessions() {
 // message.
 type jsonStream struct{ ws *websocket.Conn }
 
-func (s jsonStream) WriteObject(v any) error { return wsjson.Write(context.Background(), s.ws, v) }
-func (s jsonStream) ReadObject(v any) error  { return wsjson.Read(context.Background(), s.ws, v) }
-func (s jsonStream) Close() error            { return s.ws.CloseNow() }
+func (s jsonStream) Read() ([]byte, error) {
+	_, data, err := s.ws.Read(context.Background())
+	return data, err
+}
+
+func (s jsonStream) Write(data []byte) error {
+	return s.ws.Write(context.Background(), websocket.MessageText, data)
+}
+
+func (s jsonStream) Close() error { return s.ws.CloseNow() }

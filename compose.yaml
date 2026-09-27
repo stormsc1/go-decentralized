@@ -25,6 +25,10 @@ x-node: &node
     - ./infra:/etc/node:ro
     - keys:/home/nonroot # node keys, by node name, so IDs survive restarts
 
+x-org: &org
+  <<: *node
+  command: ["-config", "/etc/node/organization.node.yaml"]
+
 x-project: &project
   <<: *node
   command: ["-config", "/etc/node/project.node.yaml"]
@@ -59,11 +63,12 @@ services:
       internet: { ipv4_address: 203.0.113.10 }
 
   gl:
-    <<: *node
-    command: ["-config", "/etc/node/gl-organization.node.yaml"]
+    <<: *org
     environment:
+      ORG: gl
       NODE_LISTEN: :443
       NODE_API: :8080 # local HTTP API, for the network explorer (web/)
+      GREETER_RUN: /greeter # run the greeter in a process of its own
     networks:
       internet: { ipv4_address: 203.0.113.11 }
     ports: ["8443:8080"]
@@ -102,9 +107,8 @@ services:
       corp-lan: { ipv4_address: 10.20.0.10 }
 
   kg:
-    <<: [*node, *corp]
-    command: ["-config", "/etc/node/kg-organization.node.yaml"]
-    environment: *behind-nat
+    <<: [*org, *corp]
+    environment: { <<: *behind-nat, ORG: kg }
 
   kg-project-1:
     <<: [*project, *corp]
@@ -134,9 +138,8 @@ services:
       home-lan: { ipv4_address: 192.168.50.10 }
 
   ks:
-    <<: [*node, *home]
-    command: ["-config", "/etc/node/ks-organization.node.yaml"]
-    environment: *behind-nat
+    <<: [*org, *home]
+    environment: { <<: *behind-nat, ORG: ks }
 
   ks-project-1:
     <<: [*project, *home]

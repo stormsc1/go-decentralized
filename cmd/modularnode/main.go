@@ -21,7 +21,7 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", envOr("NODE_CONFIG", "infra/gl-organization.node.yaml"), "path to the node definition")
+	configPath := flag.String("config", envOr("NODE_CONFIG", "infra/organization.node.yaml"), "path to the node definition")
 	listen := flag.String("listen", envOr("NODE_LISTEN", ":8080"), "address other nodes connect to, over TLS")
 	apiAddr := flag.String("api", envOr("NODE_API", ""), "address to serve the local HTTP API on, e.g. for the network explorer (default: none)")
 	keyPath := flag.String("key", envOr("NODE_KEY", ""), "path to the node key, created if missing (default: go-decentralized/<node name>.key in the user's config directory)")

@@ -8,7 +8,7 @@ Status: draft, version 1. Anything may change until it's frozen.
 |---|---|
 | [wire.md](wire.md) | Identity, TLS, addresses, messages, calls and relays between nodes |
 | [modules.md](modules.md) | Manifests, capabilities, what nodes give modules, runtimes |
-| [modules/discovery.md](modules/discovery.md) | The DHT behind the discovery module |
+| [modules/discovery.md](modules/discovery.md) | The DHT behind the discovery module, and finding nodes on the local network |
 | [module.schema.json](module.schema.json) | JSON Schema of `module.yaml` |
 
 ## Model
