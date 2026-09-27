@@ -3,7 +3,10 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -14,8 +17,8 @@ import (
 	"go-decentralized/module"
 )
 
-// echo is a test module: it tells callers who they are, adds numbers, and
-// asks its node for its name.
+// echo is a test module: it tells callers who they are, adds numbers, asks
+// its node for its name, keeps notes and pokes other nodes.
 type echo struct{ env module.Env }
 
 var echoManifest = module.MustParseManifest([]byte(`
@@ -38,6 +41,17 @@ capabilities:
     input: {type: object}
   - name: notes
     description: Lists the notes, newest first.
+  - name: poke
+    access: network
+    description: Tells subscribers who poked.
+  - name: poke_node
+    description: Pokes the node with the given ID, without waiting.
+    input: {type: object, required: [id], properties: {id: {type: string}}}
+events:
+  - name: noted
+    schema: {type: object, required: [text], properties: {text: {type: string}}}
+  - name: poked
+    schema: {type: object, properties: {from: {type: string}}}
 entities:
   - name: note
     schema:
@@ -67,12 +81,21 @@ func (e echo) Handlers() map[string]module.Handler {
 		"note": module.HandlerFor(func(ctx context.Context, in map[string]any) (struct{}, error) {
 			id, _ := in["id"].(string)
 			delete(in, "id")
-			return struct{}{}, e.env.Entities("note").Put(ctx, id, in)
+			if err := e.env.Entities("note").Put(ctx, id, in); err != nil {
+				return struct{}{}, err
+			}
+			return struct{}{}, e.env.Emit(ctx, "noted", map[string]any{"text": in["text"]})
 		}),
 		"notes": module.HandlerFor(func(ctx context.Context, _ struct{}) (map[string]any, error) {
 			var notes []map[string]any
 			err := e.env.Entities("note").Query(ctx, module.Query{OrderBy: "time", Desc: true}, &notes)
 			return map[string]any{"notes": notes}, err
+		}),
+		"poke": module.HandlerFor(func(ctx context.Context, _ struct{}) (struct{}, error) {
+			return struct{}{}, e.env.Emit(ctx, "poked", map[string]string{"from": module.Caller(ctx)})
+		}),
+		"poke_node": module.HandlerFor(func(ctx context.Context, in struct{ ID string }) (struct{}, error) {
+			return struct{}{}, e.env.NotifyNode(ctx, in.ID, "echo.poke", nil)
 		}),
 	}
 }
@@ -147,7 +170,13 @@ func testModule(t *testing.T, ctx context.Context, caller, callee *Node, calleeA
 	}
 
 	// The module keeps records in its node's store, checked against its
-	// entity type's schema; tools can't reach them.
+	// entity type's schema; tools can't reach them. It tells subscribers of
+	// each.
+	noted, err := callee.Subscribe("echo.noted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer noted.Close()
 	for _, note := range []string{`{"id":"a","text":"first","time":1}`, `{"id":"b","text":"second","time":2}`} {
 		if _, err := callee.Call(ctx, "echo.note", json.RawMessage(note)); err != nil {
 			t.Fatal(err)
@@ -162,6 +191,80 @@ func testModule(t *testing.T, ctx context.Context, caller, callee *Node, calleeA
 	}
 	if _, err := callee.Call(ctx, "store.kv_put", json.RawMessage(`{"key":"k","value":1}`)); module.Code(err) != module.CodePermissionDenied {
 		t.Fatalf("a tool used a module's store: err = %v", err)
+	}
+	for _, want := range []string{`{"text":"first"}`, `{"text":"second"}`} {
+		if e := next(t, noted); e.Ref != "echo.noted" || string(e.Body) != want {
+			t.Fatalf("event %s %s, want echo.noted %s", e.Ref, e.Body, want)
+		}
+	}
+
+	// The module notifies another node, which doesn't answer.
+	poked, err := caller.Subscribe("echo.poked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer poked.Close()
+	if _, err := callee.Call(ctx, "echo.poke_node", json.RawMessage(`{"id":"`+caller.ID+`"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if e := next(t, poked); string(e.Body) != `{"from":"`+callee.ID+`"}` {
+		t.Fatalf("poked by %s, want %.8s", e.Body, callee.ID)
+	}
+}
+
+// next returns the next event of sub, failing the test if none comes soon.
+func next(t *testing.T, sub *Subscription) Event {
+	t.Helper()
+	select {
+	case e, ok := <-sub.Events():
+		if !ok {
+			t.Fatal("the subscription ended")
+		}
+		return e
+	case <-time.After(5 * time.Second):
+		t.Fatal("no event")
+	}
+	return Event{}
+}
+
+// Local tools subscribe to events over the local API, and lose their
+// subscription if they fall behind.
+func TestEvents(t *testing.T) {
+	ctx := context.Background()
+	n, _ := start(t, nil, ModuleConfig{Name: "echo"})
+	if _, err := n.Subscribe("echo.missing"); module.Code(err) != module.CodeNotFound {
+		t.Fatalf("subscribed to an event no module has: err = %v", err)
+	}
+	api := httptest.NewServer(n.Handler())
+	defer api.Close()
+	res, err := http.Get(api.URL + "/v1/events?ref=echo.noted&ref=echo.poked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.Call(ctx, "echo.note", json.RawMessage(`{"id":"a","text":"hi","time":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	stream := make([]byte, len("event: echo.noted\ndata: {\"text\":\"hi\"}\n\n"))
+	if _, err := io.ReadFull(res.Body, stream); err != nil || string(stream) != "event: echo.noted\ndata: {\"text\":\"hi\"}\n\n" {
+		t.Fatalf("stream = %q, %v", stream, err)
+	}
+	res.Body.Close()
+
+	sub, err := n.Subscribe("echo.noted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range behind + 1 {
+		if _, err := n.Call(ctx, "echo.note", json.RawMessage(`{"id":"a","text":"hi","time":1}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := 0
+	for range sub.Events() {
+		got++
+	}
+	if got != behind {
+		t.Fatalf("got %d events before the subscription ended, want %d", got, behind)
 	}
 }
 

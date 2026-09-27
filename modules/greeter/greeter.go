@@ -51,7 +51,11 @@ type greeting struct {
 func (m *Module) hello(ctx context.Context, in struct {
 	Name string `json:"name"`
 }) (greeting, error) {
-	return greeting{fmt.Sprintf("%s %s, from %s! You called from node %.8s.", m.cfg.Greeting, in.Name, m.env.NodeName, module.Caller(ctx))}, nil
+	caller := module.Caller(ctx)
+	if err := m.env.Emit(ctx, "greeted", map[string]string{"name": in.Name, "caller": caller}); err != nil {
+		return greeting{}, err
+	}
+	return greeting{fmt.Sprintf("%s %s, from %s! You called from node %.8s.", m.cfg.Greeting, in.Name, m.env.NodeName, caller)}, nil
 }
 
 // greet asks the node with the given ID for a greeting.

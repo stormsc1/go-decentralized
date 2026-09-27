@@ -39,14 +39,31 @@ const manifest = {
       output: greeting,
     },
   ],
+  events: [
+    {
+      name: 'greeted',
+      description: 'Someone was greeted.',
+      schema: {
+        type: 'object',
+        required: ['name', 'caller'],
+        properties: {
+          name: { type: 'string' },
+          caller: { type: 'string', description: 'The ID of the node that called.' },
+        },
+      },
+    },
+  ],
 }
 
 serve((config, env) => ({
   manifest,
   handlers: {
-    hello: (input, call) => ({
-      greeting: `${config.greeting ?? 'Hello'} ${input.name ?? ''}, from ${env.nodeName}! You called from node ${call.caller.slice(0, 8)}. (TypeScript)`,
-    }),
+    hello: async (input, call) => {
+      await env.emit('greeted', { name: input.name ?? '', caller: call.caller })
+      return {
+        greeting: `${config.greeting ?? 'Hello'} ${input.name ?? ''}, from ${env.nodeName}! You called from node ${call.caller.slice(0, 8)}. (TypeScript)`,
+      }
+    },
     greet: input => env.callNode(input.id, 'greeter.hello', { name: input.name }),
   },
 }))

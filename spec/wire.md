@@ -30,6 +30,7 @@ Messages are [JSON-RPC 2.0](https://www.jsonrpc.org/specification):
 |---|---|---|
 | A call | Request | `method` is the capability's ref, `<module>.<capability>`. `params` is its input, an object. `id` is an integer the caller picks, unique among its calls in flight on the link. |
 | Its end | Response | `result` is the call's result, or `error` why it failed (see "Errors"). |
+| A call without an end | Notification | As a call, without `id`: the caller doesn't wait, and the callee handles it like a call but never answers, even with an error. For news that may as well get lost. |
 | A cancellation | Notification `$/cancelRequest` | `params` is `{"id": <the call's id>}`, as in LSP. The callee SHOULD stop, and still answers. |
 
 What a call needs besides its input goes in `params._meta`, which isn't part of the input:
@@ -40,7 +41,7 @@ What a call needs besides its input goes in `params._meta`, which isn't part of 
 | `from`, `to` | Only between a node and its process modules, see [modules.md](modules.md). |
 
 - Messages are at most 1 MiB, encoded. Large data doesn't travel in messages; a transfer protocol for it is planned.
-- Batches aren't used. Other notifications are reserved for events; receivers ignore those they don't know.
+- Batches aren't used. Methods starting with `$/` are the protocol's own; receivers ignore those they don't know.
 
 ## Sessions
 

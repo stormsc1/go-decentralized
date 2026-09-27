@@ -43,6 +43,11 @@ modules:
 		cancel()
 		<-done
 	}()
+	greeted, err := n.Subscribe("greeter.greeted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer greeted.Close()
 	result, err := n.Call(ctx, "greeter.hello", json.RawMessage(`{"name": "you"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +55,11 @@ modules:
 	var out struct{ Greeting string }
 	if err := json.Unmarshal(result, &out); err != nil || !strings.HasPrefix(out.Greeting, "Hi you, from test!") || !strings.HasSuffix(out.Greeting, "(TypeScript)") {
 		t.Fatalf("greeting = %q, %v", out.Greeting, err)
+	}
+	e := <-greeted.Events()
+	var body struct{ Name, Caller string }
+	if err := json.Unmarshal(e.Body, &body); err != nil || body.Name != "you" || body.Caller != n.ID {
+		t.Fatalf("event %s %s", e.Ref, e.Body)
 	}
 	if _, err := n.Call(ctx, "greeter.hello", json.RawMessage(`{"name": 1}`)); err == nil {
 		t.Fatal("the node passed on an input the module's schema rejects")

@@ -2,6 +2,7 @@ package node
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -129,6 +130,9 @@ func (p *process) start() (module.Manifest, error) {
 // else to this node's capabilities, as the node.
 func (p *process) handle(ctx context.Context, call module.Call) (json.RawMessage, error) {
 	ctx = context.WithValue(ctx, moduleKey{}, p.name)
+	if call.Notify {
+		return nil, p.n.notifyNode(ctx, cmp.Or(call.To, p.n.ID), call.Ref, call.Input)
+	}
 	if call.To != "" {
 		return p.n.callNode(ctx, call.To, call.Ref, call.Input)
 	}

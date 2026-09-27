@@ -13,7 +13,7 @@ const maxTraces = 1000
 // Trace records a call or stream a node made, for debugging.
 type Trace struct {
 	Time time.Time `json:"time"`
-	Kind string    `json:"kind"` // "call" or "stream"
+	Kind string    `json:"kind"` // "call", "notify" or "stream"
 	// Ref is the capability called, or the stream opened.
 	Ref  string `json:"ref"`
 	From string `json:"from"`

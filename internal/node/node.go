@@ -36,8 +36,12 @@ type Node struct {
 	// Process modules may call while later modules load.
 	mu       sync.RWMutex
 	modules  []*loaded
-	caps     map[string]*capability // by ref
-	entities map[string]entityType  // by "<module>.<entity>"
+	caps     map[string]*capability        // by ref
+	events   map[string]*jsonschema.Schema // their bodies' schemas, by ref
+	entities map[string]entityType         // by "<module>.<entity>"
+
+	smu  sync.Mutex
+	subs map[*Subscription]struct{}
 }
 
 // loaded is a module the node runs.
@@ -72,7 +76,9 @@ func New(cfg Config, key ed25519.PrivateKey, nw *network.Network, st store.Drive
 		store:    st,
 		key:      key,
 		caps:     map[string]*capability{},
+		events:   map[string]*jsonschema.Schema{},
 		entities: map[string]entityType{},
+		subs:     map[*Subscription]struct{}{},
 	}
 	defer func() {
 		if err != nil {
@@ -181,6 +187,14 @@ func (n *Node) add(l *loaded, handlers map[string]handler) error {
 		}
 		caps[m.Name+"."+c.Name] = &capability{module: l, spec: c, input: input, handle: h}
 	}
+	events := map[string]*jsonschema.Schema{}
+	for _, e := range m.Events {
+		schema, err := compile(m, e.Schema)
+		if err != nil {
+			return fmt.Errorf("%s event %s: schema: %w", m.Name, e.Name, err)
+		}
+		events[m.Name+"."+e.Name] = schema
+	}
 	entities := map[string]entityType{}
 	for _, e := range m.Entities {
 		schema, err := compile(m, e.Schema)
@@ -195,6 +209,7 @@ func (n *Node) add(l *loaded, handlers map[string]handler) error {
 		entities[m.Name+"."+e.Name] = entityType{schema: schema, indexes: e.Indexes}
 	}
 	maps.Copy(n.caps, caps)
+	maps.Copy(n.events, events)
 	maps.Copy(n.entities, entities)
 	n.modules = append(n.modules, l)
 	return nil
@@ -290,6 +305,20 @@ func (n *Node) env(name string) module.Env {
 			}
 			return module.Decode(result, out)
 		},
+		NotifyNode: func(ctx context.Context, id, ref string, in any) error {
+			body, err := module.Encode(in)
+			if err != nil {
+				return err
+			}
+			return n.notifyNode(context.WithValue(ctx, moduleKey{}, name), id, ref, body)
+		},
+		Emit: func(_ context.Context, event string, body any) error {
+			data, err := module.Encode(body)
+			if err != nil {
+				return err
+			}
+			return n.emit(name, event, data)
+		},
 		Sign: func(_ context.Context, purpose string, data []byte) ([]byte, error) {
 			return n.sign(name, purpose, data)
 		},
@@ -303,14 +332,33 @@ func (n *Node) callNode(ctx context.Context, id, ref string, body json.RawMessag
 	if id == n.ID {
 		return n.call(ctx, n.ID, ref, body)
 	}
-	peer := network.Peer{ID: id}
-	if !n.Network.Connected(id) {
-		var err error
-		if peer, err = n.routing.Resolve(ctx, id); err != nil {
-			return nil, err
-		}
+	peer, err := n.peer(ctx, id)
+	if err != nil {
+		return nil, err
 	}
 	return n.Network.Call(ctx, peer, ref, body)
+}
+
+// notifyNode calls like callNode, but doesn't wait for the call to end.
+func (n *Node) notifyNode(ctx context.Context, id, ref string, body json.RawMessage) error {
+	if id == n.ID {
+		go n.call(context.WithoutCancel(ctx), n.ID, ref, body)
+		return nil
+	}
+	peer, err := n.peer(ctx, id)
+	if err != nil {
+		return err
+	}
+	return n.Network.Notify(ctx, peer, ref, body)
+}
+
+// peer returns how to reach the node id: over the session this node has with
+// it, or wherever routing finds it.
+func (n *Node) peer(ctx context.Context, id string) (network.Peer, error) {
+	if n.Network.Connected(id) {
+		return network.Peer{ID: id}, nil
+	}
+	return n.routing.Resolve(ctx, id)
 }
 
 // provides returns the capabilities this node announces, so other nodes can
@@ -388,6 +436,9 @@ func (n *Node) Info() module.NodeInfo {
 				Access:      cmp.Or(c.Access, module.Local),
 				Internal:    c.Internal,
 			})
+		}
+		for _, e := range m.Events {
+			mi.Events = append(mi.Events, module.EventInfo{Ref: m.Name + "." + e.Name, Description: e.Description})
 		}
 		info.Modules = append(info.Modules, mi)
 	}

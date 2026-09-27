@@ -16,6 +16,7 @@ func (n *Node) builtins() map[string]module.Handler {
 			return n.Info(), nil
 		}),
 		"sign":    module.HandlerFor(n.signFor),
+		"emit":    module.HandlerFor(n.emitFor),
 		"traces":  module.HandlerFor(n.traces),
 		"inspect": module.HandlerFor(n.inspect),
 	}
@@ -34,6 +35,20 @@ type signOutput struct {
 func (n *Node) signFor(ctx context.Context, in signInput) (signOutput, error) {
 	sig, err := n.sign(callingModule(ctx), in.Purpose, in.Data)
 	return signOutput{Signature: sig}, err
+}
+
+type emitInput struct {
+	Name string          `json:"name"`
+	Body json.RawMessage `json:"body"`
+}
+
+// emitFor emits the calling module's event.
+func (n *Node) emitFor(ctx context.Context, in emitInput) (struct{}, error) {
+	m := callingModule(ctx)
+	if m == "" {
+		return struct{}{}, module.Errorf(module.CodePermissionDenied, "only modules have events")
+	}
+	return struct{}{}, n.emit(m, in.Name, in.Body)
 }
 
 type tracesInput struct {

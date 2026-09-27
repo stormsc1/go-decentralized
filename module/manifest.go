@@ -16,11 +16,22 @@ type Manifest struct {
 	Version      string       `yaml:"version" json:"version"`
 	Description  string       `yaml:"description" json:"description,omitempty"`
 	Capabilities []Capability `yaml:"capabilities" json:"capabilities"`
+	// Events are what the module tells subscribers as it happens, see
+	// Env.Emit.
+	Events []Event `yaml:"events" json:"events,omitempty"`
 	// Entities are the types of records the module keeps in its node's
 	// store.
 	Entities []Entity `yaml:"entities" json:"entities,omitempty"`
 	// Defs are schemas the other schemas refer to, as "#/$defs/<name>".
 	Defs map[string]any `yaml:"$defs" json:"$defs,omitempty"`
+}
+
+// Event is something a module tells subscribers as it happens.
+type Event struct {
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description" json:"description,omitempty"`
+	// Schema is the JSON Schema of the event's body, an object.
+	Schema map[string]any `yaml:"schema" json:"schema,omitempty"`
 }
 
 // Entity is a type of record a module keeps in its node's store.
@@ -84,8 +95,8 @@ func MustParseManifest(data []byte) Manifest {
 	return m
 }
 
-// Validate checks the manifest's names, and that the capabilities' schemas
-// describe objects.
+// Validate checks the manifest's names, and that its schemas describe
+// objects.
 func (m Manifest) Validate() error {
 	if !name.MatchString(m.Name) {
 		return fmt.Errorf("manifest: invalid module name %q", m.Name)
@@ -103,6 +114,16 @@ func (m Manifest) Validate() error {
 			if !object(s) {
 				return fmt.Errorf("manifest %s: %s: inputs and outputs must be objects", m.Name, c.Name)
 			}
+		}
+	}
+	// Events share the capabilities' names, <module>.<name>.
+	for _, e := range m.Events {
+		if !name.MatchString(e.Name) || seen[e.Name] {
+			return fmt.Errorf("manifest %s: invalid event name %q, or one a capability or event has", m.Name, e.Name)
+		}
+		seen[e.Name] = true
+		if !object(e.Schema) {
+			return fmt.Errorf("manifest %s: event %s: bodies must be objects", m.Name, e.Name)
 		}
 	}
 	seen = map[string]bool{}

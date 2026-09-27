@@ -28,6 +28,13 @@ type ModuleInfo struct {
 	// into it and "process" for modules in a process of their own.
 	Runtime      string           `json:"runtime"`
 	Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+	Events       []EventInfo      `json:"events,omitempty"`
+}
+
+type EventInfo struct {
+	// Ref names the event: "<module>.<event>".
+	Ref         string `json:"ref"`
+	Description string `json:"description,omitempty"`
 }
 
 type CapabilityInfo struct {

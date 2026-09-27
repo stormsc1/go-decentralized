@@ -106,6 +106,20 @@ func (s *server) start(input json.RawMessage) (json.RawMessage, error) {
 		CallNode: func(ctx context.Context, id, ref string, in, out any) error {
 			return s.call(ctx, Call{Ref: ref, To: id}, in, out)
 		},
+		NotifyNode: func(ctx context.Context, id, ref string, in any) error {
+			input, err := Encode(in)
+			if err != nil {
+				return err
+			}
+			return s.link.Notify(ctx, Call{Ref: ref, Input: input, To: id})
+		},
+		Emit: func(ctx context.Context, name string, body any) error {
+			data, err := Encode(body)
+			if err != nil {
+				return err
+			}
+			return s.call(ctx, Call{Ref: "node.emit"}, map[string]any{"name": name, "body": data}, nil)
+		},
 		Sign: func(ctx context.Context, purpose string, data []byte) ([]byte, error) {
 			var out struct {
 				Signature []byte `json:"signature"`

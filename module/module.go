@@ -63,6 +63,14 @@ type Env struct {
 	// its result into out. The node finds the other node, and reaches it
 	// directly or through a relay.
 	CallNode func(ctx context.Context, id, ref string, in, out any) error
+	// NotifyNode calls a capability of the node with the given ID like
+	// CallNode, but doesn't wait for the call to end, nor learn how it did:
+	// for news that may as well get lost, such as someone typing. It returns
+	// once the call is sent.
+	NotifyNode func(ctx context.Context, id, ref string, in any) error
+	// Emit tells the node's subscribers, such as its users' apps, of the
+	// module's event called name, which its manifest declares.
+	Emit func(ctx context.Context, name string, body any) error
 	// Sign signs data with the node's key, for a purpose starting with the
 	// module's name, e.g. "greeter.token". See Verify.
 	Sign func(ctx context.Context, purpose string, data []byte) ([]byte, error)

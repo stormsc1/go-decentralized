@@ -20,6 +20,15 @@ capabilities:
         id: {type: string, description: The node ID, in hex.}
         name: {type: string, description: Who to be greeted as.}
     output: {$ref: "#/$defs/greeting"}
+events:
+  - name: greeted
+    description: Someone was greeted.
+    schema:
+      type: object
+      required: [name, caller]
+      properties:
+        name: {type: string}
+        caller: {type: string, description: The ID of the node that called.}
 $defs:
   greeting:
     type: object

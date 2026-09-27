@@ -7,10 +7,11 @@ impostor from reading or altering traffic, but it could drop it.
 
 Fix: put the relay's ID in relay addresses, and verify it too.
 
-## Streams and events
-Messages only carry calls and their ends. Progress, logs and events between
-modules need `item` and `event` messages, with flow control per call on
-process pipes. Large files need a transfer protocol of their own.
+## Streams, and events between modules
+Messages carry calls, their ends and calls without one; events only reach
+local tools. Progress and logs need streamed results, with flow control per
+call on process pipes, and modules may want each other's events. Large files
+need a transfer protocol of their own.
 
 ## Who may call what
 Any node may call any network capability, e.g. `debug.traces`, which shows

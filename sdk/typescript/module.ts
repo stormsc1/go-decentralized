@@ -16,6 +16,13 @@ export interface Env {
   // callNode calls a capability of the node with the given ID. The node
   // finds it, and reaches it directly or through a relay.
   callNode(id: string, ref: string, input?: object): Promise<any>
+  // notifyNode calls a capability of the node with the given ID like
+  // callNode, but doesn't wait for the call to end, nor learn how it did:
+  // for news that may as well get lost, such as someone typing.
+  notifyNode(id: string, ref: string, input?: object): void
+  // emit tells the node's subscribers, such as its users' apps, of the
+  // module's event called name, which its manifest declares.
+  emit(name: string, body?: object): Promise<void>
   // sign signs data with the node's key, for a purpose starting with the
   // module's name.
   sign(purpose: string, data: Uint8Array): Promise<Uint8Array>
@@ -87,6 +94,10 @@ export function serve(start: (config: any, env: Env) => Module | Promise<Module>
     nodeName: node.name,
     call: (ref, input) => call(ref, input),
     callNode: (id, ref, input) => call(ref, input, { to: id }),
+    notifyNode: (id, ref, input = {}) => send({ method: ref, params: { ...input, _meta: { to: id } } }),
+    emit: async (name, body = {}) => {
+      await call('node.emit', { name, body })
+    },
     sign: async (purpose, data) => {
       const out = await call('node.sign', { purpose, data: Buffer.from(data).toString('base64') })
       return Buffer.from(out.signature, 'base64')
@@ -110,7 +121,7 @@ export function serve(start: (config: any, env: Env) => Module | Promise<Module>
   const receive = (m: any) => {
     if (m.method && m.id === undefined) {
       if (m.method === '$/cancelRequest') running.get(m.params?.id)?.abort()
-      return // other notifications are for later versions
+      return // the node doesn't send others
     }
     if (m.method) {
       const { _meta: meta = {}, ...input } = m.params ?? {}

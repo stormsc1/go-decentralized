@@ -19,6 +19,9 @@ capabilities:
       properties:
         name: {type: string}
     output: {$ref: "#/$defs/greeting"}   # schema of the result
+events:                    # what the module tells subscribers as it happens
+  - name: greeted          # unique among capabilities and events
+    schema: {type: object, properties: {name: {type: string}}}
 entities:                  # types of records the node keeps for the module
   - name: visit            # [a-z][a-z0-9_]*, unique in the module
     schema:                # schema of a record
@@ -46,7 +49,7 @@ The module learns who called: the ID the calling node proved over TLS, or its ow
 
 ## What nodes give modules
 
-Modules call capabilities of their own node's modules, and of other nodes, which they name by ID alone: the node finds them ([routing.md](routing.md)). They call as the node: other nodes see the node's ID.
+Modules call capabilities of their own node's modules, and of other nodes, which they name by ID alone: the node finds them ([routing.md](routing.md)). They call as the node: other nodes see the node's ID. They may also call without waiting for the end, for news that may as well get lost, such as someone typing ([wire.md](wire.md), "Messages").
 
 Nodes have capabilities of their own, for their modules and tools. Schemas: `internal/node/node.module.yaml`.
 
@@ -54,8 +57,15 @@ Nodes have capabilities of their own, for their modules and tools. Schemas: `int
 |---|---|---|
 | `node.info` | local | Describes the node: ID, public key, addresses, modules and their capabilities. |
 | `node.sign` | local, internal | Signs data with the node's key, see "Signing". |
+| `node.emit` | local, internal | Emits one of the calling module's events, see "Events". |
 | `node.traces` | local, internal | Lists the calls the node made, for debugging. |
 | `node.inspect` | local, internal | Reports the state of the node's network and modules, for debugging. |
+
+## Events
+
+Modules tell subscribers what happens, such as a message arriving, with the events their manifest declares. The node checks each event's body against its schema, and fails `node.emit` with `invalid_argument` if it doesn't match.
+
+Subscribers are local tools, such as apps, on the local API: `GET /v1/events?ref=<module>.<event>&ref=...` streams the events named as [server-sent events](https://html.spec.whatwg.org/multipage/server-sent-events.html), each with its ref as the event type and its body as the data. Events arrive in the order they happened. A subscriber that falls 64 events behind loses its subscription: it should subscribe again, then catch up by calling capabilities.
 
 ## Storage
 
@@ -100,7 +110,7 @@ modules:
 - Messages ([wire.md](wire.md), JSON-RPC 2.0) travel over the process's stdin, from the node, and stdout, from the module, one per line, as in MCP's stdio transport. Nothing else may be written to stdout. stderr is the module's log, which the node keeps.
 - Both sides make calls and pick the `id`s of their own. Calls run concurrently, and end in any order. Either side can cancel its own call.
 - On calls the node sends, `_meta.from` is the ID of the node that made the call.
-- On calls the module sends, `_meta.to`, a node ID, asks the node to call that node. Without it, the call is to the node's own capabilities.
+- On calls the module sends, `_meta.to`, a node ID, asks the node to call that node. Without it, the call is to the node's own capabilities. A call without an `id` goes on as one, and the node doesn't answer it.
 
 The node's first call is `module.start`, with input `{node: {id, name}, config}`, where `config` is the module's block from the node definition. It returns `{manifest}`, and from then on the node serves the module's capabilities. The node may also call `module.inspect`, which returns the module's state for debugging, or `{}`.
 

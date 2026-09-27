@@ -50,16 +50,39 @@ type dialing struct {
 // answers with are *module.Error; if none answers, the error's code is
 // module.CodeUnavailable.
 func (n *Network) Call(ctx context.Context, to Peer, ref string, body json.RawMessage) (json.RawMessage, error) {
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, callTimeout)
-		defer cancel()
-	}
+	ctx, cancel := withCallTimeout(ctx)
+	defer cancel()
 	s, err := n.session(ctx, to, ref)
 	if err != nil {
 		return nil, module.Errorf(module.CodeUnavailable, "%v", err)
 	}
 	return n.call(ctx, s, ref, body)
+}
+
+// Notify calls the capability ref on the node to like Call, but doesn't wait
+// for the call to end: the node never answers. It returns once the call is
+// sent.
+func (n *Network) Notify(ctx context.Context, to Peer, ref string, body json.RawMessage) error {
+	ctx, cancel := withCallTimeout(ctx)
+	defer cancel()
+	s, err := n.session(ctx, to, ref)
+	if err != nil {
+		return module.Errorf(module.CodeUnavailable, "%v", err)
+	}
+	start := time.Now()
+	s.used.Store(start.UnixNano())
+	err = s.link.Notify(ctx, module.Call{Ref: ref, Input: body})
+	n.trace(ctx, "notify", ref, s.addr, s.peer, start, err)
+	return err
+}
+
+// withCallTimeout gives ctx the default timeout of calls, unless it has a
+// deadline.
+func withCallTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, callTimeout)
 }
 
 // call makes a call over s.

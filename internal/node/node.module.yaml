@@ -19,6 +19,15 @@ capabilities:
       type: object
       properties:
         signature: {type: string, contentEncoding: base64}
+  - name: emit
+    description: Tells subscribers of the calling module's event called name, which its manifest declares.
+    internal: true
+    input:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string}
+        body: {type: object, description: "Checked against the event's schema."}
   - name: traces
     description: Lists the calls this node made after since, oldest first.
     internal: true
@@ -72,11 +81,19 @@ $defs:
                   description: {type: string}
                   access: {enum: [local, network]}
                   internal: {type: boolean}
+            events:
+              type: array
+              items:
+                type: object
+                required: [ref]
+                properties:
+                  ref: {type: string}
+                  description: {type: string}
   trace:
     type: object
     properties:
       time: {type: string, format: date-time}
-      kind: {enum: [call, stream]}
+      kind: {enum: [call, notify, stream]}
       ref: {type: string}
       from: {type: string, description: ID of the calling node.}
       to: {type: string, description: ID of the node that answered, as it proved over TLS.}

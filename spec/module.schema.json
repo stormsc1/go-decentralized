@@ -9,7 +9,7 @@
     "name": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$",
-      "description": "Identifies the module in a node and prefixes its capabilities. node, network and module are reserved."
+      "description": "Identifies the module in a node and prefixes its capabilities and events. module, node, network, routing and store are reserved."
     },
     "version": {
       "type": "string",
@@ -21,6 +21,11 @@
     "capabilities": {
       "type": "array",
       "items": { "$ref": "#/$defs/capability" }
+    },
+    "events": {
+      "type": "array",
+      "description": "What the module tells subscribers as it happens.",
+      "items": { "$ref": "#/$defs/event" }
     },
     "entities": {
       "type": "array",
@@ -65,6 +70,23 @@
         "output": {
           "$ref": "#/$defs/schema",
           "description": "JSON Schema of the call's result. Unset means any object."
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Unique among the module's capabilities and events. Subscribed to as <module>.<name>."
+        },
+        "description": { "type": "string" },
+        "schema": {
+          "$ref": "#/$defs/schema",
+          "description": "JSON Schema of the event's body. Unset means any object."
         }
       }
     },

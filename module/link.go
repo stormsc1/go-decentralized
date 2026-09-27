@@ -45,6 +45,9 @@ type Call struct {
 	// To is the ID of the node a process module's call is for, if not its
 	// own.
 	To string
+	// Notify is set on calls whose caller doesn't wait for their end, see
+	// Link.Notify.
+	Notify bool
 }
 
 // meta is what a call carries besides its input, in params._meta.
@@ -129,9 +132,9 @@ func (s *stdio) Close() error { return s.w.Close() }
 // receive handles a message from the other end.
 func (l *Link) receive(ctx context.Context, m message) {
 	switch {
-	case m.Method != "" && m.ID == nil: // a notification
+	case m.Method == cancelMethod:
 		var cancel struct{ ID json.RawMessage }
-		if m.Method == cancelMethod && json.Unmarshal(m.Params, &cancel) == nil {
+		if json.Unmarshal(m.Params, &cancel) == nil {
 			l.mu.Lock()
 			stop := l.running[string(cancel.ID)]
 			l.mu.Unlock()
@@ -139,7 +142,7 @@ func (l *Link) receive(ctx context.Context, m message) {
 				stop()
 			}
 		}
-	case m.Method != "": // a call
+	case m.Method != "": // a call, or a notification: one without an ID
 		l.serve(ctx, m)
 	default: // an end
 		id, err := strconv.ParseUint(string(m.ID), 10, 64)
@@ -156,11 +159,15 @@ func (l *Link) receive(ctx context.Context, m message) {
 	}
 }
 
-// serve handles a call from the other end, and answers it.
+// serve handles a call from the other end, and answers it unless it's a
+// notification.
 func (l *Link) serve(ctx context.Context, m message) {
+	notify := m.ID == nil
 	input, meta, err := splitMeta(m.Params)
 	if err != nil {
-		l.reply(m.ID, nil, Errorf(CodeInvalidArgument, "params: %v", err))
+		if !notify {
+			l.reply(m.ID, nil, Errorf(CodeInvalidArgument, "params: %v", err))
+		}
 		return
 	}
 	var cancel context.CancelFunc
@@ -169,13 +176,21 @@ func (l *Link) serve(ctx context.Context, m message) {
 	} else {
 		ctx, cancel = context.WithCancel(ctx)
 	}
+	call := Call{Ref: m.Method, Input: input, From: meta.From, To: meta.To, Notify: notify}
+	if notify {
+		go func() {
+			defer cancel()
+			_, _ = l.handle(ctx, call)
+		}()
+		return
+	}
 	key := string(m.ID)
 	l.mu.Lock()
 	l.running[key] = cancel
 	l.mu.Unlock()
 	go func() {
 		defer cancel()
-		result, err := l.handle(ctx, Call{Ref: m.Method, Input: input, From: meta.From, To: meta.To})
+		result, err := l.handle(ctx, call)
 		l.mu.Lock()
 		delete(l.running, key)
 		l.mu.Unlock()
@@ -197,11 +212,7 @@ func (l *Link) reply(id, result json.RawMessage, err error) {
 // Call makes a call and waits for it to end. It tells the other end how long
 // it waits, from ctx, and cancels the call if ctx ends first.
 func (l *Link) Call(ctx context.Context, call Call) (json.RawMessage, error) {
-	m := meta{From: call.From, To: call.To}
-	if deadline, ok := ctx.Deadline(); ok {
-		m.Timeout = max(1, time.Until(deadline).Milliseconds())
-	}
-	params, err := withMeta(call.Input, m)
+	params, err := withMeta(call.Input, callMeta(ctx, call))
 	if err != nil {
 		return nil, err
 	}
@@ -233,6 +244,35 @@ func (l *Link) Call(ctx context.Context, call Call) (json.RawMessage, error) {
 		_ = l.send(message{JSONRPC: "2.0", Method: cancelMethod, Params: cancel})
 		return nil, ErrorOf(ctx.Err())
 	}
+}
+
+// Notify makes a call without waiting for it to end, or learning how it did:
+// it sends a JSON-RPC notification, which the other end never answers. It
+// tells the other end how long the call may take, from ctx.
+func (l *Link) Notify(ctx context.Context, call Call) error {
+	params, err := withMeta(call.Input, callMeta(ctx, call))
+	if err != nil {
+		return err
+	}
+	l.mu.Lock()
+	closed := l.closed
+	l.mu.Unlock()
+	if closed {
+		return Errorf(CodeUnavailable, "link closed")
+	}
+	if err := l.send(message{JSONRPC: "2.0", Method: call.Ref, Params: params}); err != nil {
+		return Errorf(CodeUnavailable, "%v", err)
+	}
+	return nil
+}
+
+// callMeta returns what call carries besides its input.
+func callMeta(ctx context.Context, call Call) meta {
+	m := meta{From: call.From, To: call.To}
+	if deadline, ok := ctx.Deadline(); ok {
+		m.Timeout = max(1, time.Until(deadline).Milliseconds())
+	}
+	return m
 }
 
 // Done is closed once the link is.

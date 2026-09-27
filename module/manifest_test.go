@@ -44,6 +44,20 @@ func TestManifestsMatchTheSpec(t *testing.T) {
 	}
 }
 
+func TestManifestRejectsEventsNamedLikeCapabilities(t *testing.T) {
+	_, err := ParseManifest([]byte(`
+name: chat
+version: 1.0.0
+capabilities:
+  - name: message
+events:
+  - name: message
+`))
+	if err == nil {
+		t.Fatal("parsed a capability and an event with the same ref")
+	}
+}
+
 func TestManifestRejectsNonObjectSchemas(t *testing.T) {
 	_, err := ParseManifest([]byte(`
 name: bad

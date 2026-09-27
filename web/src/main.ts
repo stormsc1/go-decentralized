@@ -15,7 +15,7 @@ interface Report {
 // A call or stream a node made, as returned by debug.traffic.
 interface Trace {
   time: string
-  kind: 'call' | 'stream'
+  kind: 'call' | 'notify' | 'stream'
   ref: string // the capability called, or the stream opened
   from: string
   to?: string

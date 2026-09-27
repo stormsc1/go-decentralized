@@ -76,6 +76,55 @@ func TestLinkPassesDeadlinesAndCancels(t *testing.T) {
 	}
 }
 
+// Links take notifications, calls without an ID, and never answer them.
+func TestLinkNotifications(t *testing.T) {
+	got := make(chan Call, 1)
+	handle := func(_ context.Context, call Call) (json.RawMessage, error) {
+		if call.Notify {
+			got <- call
+		}
+		return nil, nil
+	}
+	// The other end is raw, to see what the link sends.
+	r, w := io.Pipe()
+	sent, send := io.Pipe()
+	l := NewLink(context.Background(), NewStdioStream(r, send), handle)
+	t.Cleanup(func() {
+		l.Close()
+		w.Close()
+	})
+	go func() {
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","method":"chat.typing","params":{"channel":"c","_meta":{"to":"them"}}}
+{"jsonrpc":"2.0","id":7,"method":"chat.post","params":{}}
+`)
+	}()
+	select {
+	case call := <-got:
+		if call.Ref != "chat.typing" || string(call.Input) != `{"channel":"c"}` || call.To != "them" {
+			t.Fatalf("call = %+v", call)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the notification never arrived")
+	}
+	messages := json.NewDecoder(sent)
+	var m message
+	if err := messages.Decode(&m); err != nil || string(m.ID) != "7" {
+		t.Fatalf("the link first sent %+v, %v; want the end of call 7", m, err)
+	}
+
+	notified := make(chan error, 1)
+	go func() {
+		notified <- l.Notify(context.Background(), Call{Ref: "chat.typing", Input: json.RawMessage(`{"channel":"c"}`), To: "them"})
+	}()
+	m = message{}
+	if err := messages.Decode(&m); err != nil || m.ID != nil || m.Method != "chat.typing" || string(m.Params) != `{"_meta":{"to":"them"},"channel":"c"}` {
+		t.Fatalf("the link sent %+v, %v", m, err)
+	}
+	if err := <-notified; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLinkFailsCallsWhenClosed(t *testing.T) {
 	block := func(ctx context.Context, _ Call) (json.RawMessage, error) {
 		<-ctx.Done()
