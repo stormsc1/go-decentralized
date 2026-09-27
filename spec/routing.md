@@ -36,7 +36,8 @@ A lookup is iterative. It calls the α closest contacts it hasn't asked yet, mer
 
 ## Joining and announcing
 
-- A node joins by calling `dht_find_node` for its own ID on any node it knows: a configured bootstrap address, or a peer found on the local network (see "mDNS"). Then it looks up its own ID, and does so again every minute.
+- A node joins by calling `dht_find_node` for its own ID on any node it knows: a configured bootstrap address, a peer it remembers from its last run, or a peer found on the local network (see "mDNS"). Then it looks up its own ID, and does so again every minute.
+- A node remembers the nodes in its routing table, in its own store, whenever they change, so after its first run it rejoins without any bootstrap address.
 - Every 10 minutes, and whenever its addresses change, a node stores its record on the K nodes closest to its own ID, so it can be found by ID even in client mode. It also stores it on the K nodes closest to the key of every capability it provides: those with network access that aren't internal.
 
 ## mDNS

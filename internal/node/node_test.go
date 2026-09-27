@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -384,10 +385,48 @@ func newNode(t *testing.T, cfg Config) (*Node, error) {
 	return n, err
 }
 
+// A node remembers the peers it knew, in its local store, and rejoins
+// through them without a bootstrap address.
+func TestRemembersPeers(t *testing.T) {
+	ctx := context.Background()
+	a, aAddr := start(t, nil, ModuleConfig{Name: "echo"})
+	dir := t.TempDir()
+	onDisk := func(cfg *Config) { cfg.DataDir = dir }
+	b, _, stopB := launch(t, []string{aAddr}, ModuleConfig{Name: "echo"}, onDisk)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		var peers []struct{ ID string }
+		if err := b.local("routing").Get(ctx, "peers", &peers); err == nil && len(peers) == 1 && peers[0].ID == a.ID {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("b never remembered a: %v", peers)
+		}
+	}
+	stopB()
+
+	// A node in b's place, with its data but no bootstrap address, finds a.
+	c, _ := start(t, nil, ModuleConfig{Name: "echo"}, onDisk)
+	result, err := c.callNode(ctx, a.ID, "echo.whoami", nil)
+	var out struct{ Caller string }
+	if err == nil {
+		err = json.Unmarshal(result, &out)
+	}
+	if err != nil || out.Caller != c.ID {
+		t.Fatalf("whoami = %q, %v; want the caller %.8s", out.Caller, err, c.ID)
+	}
+}
+
 // start runs a node with one module, listening on localhost, until the test
 // ends. It joins the network through bootstrap, if any. opts change the
 // node definition first.
 func start(t *testing.T, bootstrap []string, mc ModuleConfig, opts ...func(*Config)) (*Node, string) {
+	t.Helper()
+	n, addr, _ := launch(t, bootstrap, mc, opts...)
+	return n, addr
+}
+
+// launch is start, also returning a function that stops the node early.
+func launch(t *testing.T, bootstrap []string, mc ModuleConfig, opts ...func(*Config)) (*Node, string, func()) {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -425,10 +464,14 @@ func start(t *testing.T, bootstrap []string, mc ModuleConfig, opts ...func(*Conf
 		close(done)
 	}()
 	go nw.ListenAndServe(ctx, addr)
-	t.Cleanup(func() {
-		cancel()
-		<-done
-	})
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			<-done
+		})
+	}
+	t.Cleanup(stop)
 	for range 50 { // until it listens
 		if c, err := net.DialTimeout("tcp", addr, 100*time.Millisecond); err == nil {
 			c.Close()
@@ -436,5 +479,5 @@ func start(t *testing.T, bootstrap []string, mc ModuleConfig, opts ...func(*Conf
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	return n, url
+	return n, url, stop
 }

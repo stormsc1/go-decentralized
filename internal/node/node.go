@@ -108,6 +108,7 @@ func New(cfg Config, key ed25519.PrivateKey, nw *network.Network, factories map[
 		Bootstrap: cfg.Network.Bootstrap,
 		MDNS:      cfg.Network.MDNS == nil || *cfg.Network.MDNS,
 		Provides:  n.provides,
+		Memory:    n.local("routing"),
 	})
 	if err != nil {
 		return nil, err

@@ -43,6 +43,9 @@ type Config struct {
 	Republish time.Duration
 	// Provides returns the keys (capability refs) this node announces.
 	Provides func() []string
+	// Changed, if set, is told the routing table's contents whenever they
+	// change, from Run.
+	Changed func(known []Contact)
 }
 
 type DHT struct {
@@ -79,6 +82,7 @@ func (d *DHT) selfRecord() Contact {
 func (d *DHT) Run(ctx context.Context) {
 	var refreshed, announced time.Time
 	var announcedAddrs []string
+	var told []Contact // the table as Changed last saw it
 	for {
 		addrs := d.cfg.Addrs()
 		changed := !slices.Equal(addrs, announcedAddrs)
@@ -93,6 +97,10 @@ func (d *DHT) Run(ctx context.Context) {
 			d.announce(ctx)
 			announced, announcedAddrs = time.Now(), addrs
 		}
+		if known := d.table.All(); d.cfg.Changed != nil && !sameNodes(known, told) {
+			d.cfg.Changed(known)
+			told = known
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -103,6 +111,23 @@ func (d *DHT) Run(ctx context.Context) {
 
 // Known returns the nodes in the routing table, without any lookups.
 func (d *DHT) Known() []Contact { return d.table.All() }
+
+// sameNodes reports whether a and b hold the same nodes.
+func sameNodes(a, b []Contact) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ids := map[ID]bool{}
+	for _, c := range a {
+		ids[c.ID] = true
+	}
+	for _, c := range b {
+		if !ids[c.ID] {
+			return false
+		}
+	}
+	return true
+}
 
 // Local returns what this node knows of the node id, without any lookups:
 // its record, which has every address it can be reached at, or else its

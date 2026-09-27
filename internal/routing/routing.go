@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	_ "embed"
+	"log/slog"
 	"slices"
 	"sync"
 	"time"
@@ -35,7 +36,20 @@ type Config struct {
 	MDNS bool
 	// Provides returns the capabilities this node announces.
 	Provides func() []string
+	// Memory keeps what the node learns across restarts, if it has somewhere
+	// to: the peers it knew, to rejoin through.
+	Memory Memory
 }
+
+// Memory keeps values across restarts, see Config.Memory.
+type Memory interface {
+	// Get decodes the value of key into v.
+	Get(ctx context.Context, key string, v any) error
+	Put(ctx context.Context, key string, v any) error
+}
+
+// peersKey is where routing remembers the peers it knew.
+const peersKey = "peers"
 
 type Routing struct {
 	cfg Config
@@ -77,8 +91,32 @@ func New(cfg Config) (*Routing, error) {
 		Refresh:   time.Minute,
 		Republish: 10 * time.Minute,
 		Provides:  cfg.Provides,
+		Changed:   r.remember,
 	})
 	return r, nil
+}
+
+// remember keeps the nodes in the routing table, to rejoin through next
+// time.
+func (r *Routing) remember(known []kademlia.Contact) {
+	if r.cfg.Memory == nil {
+		return
+	}
+	if err := r.cfg.Memory.Put(context.Background(), peersKey, known); err != nil {
+		slog.Warn("routing: can't remember peers", "err", err)
+	}
+}
+
+// remembered returns the peers remembered from before, if any.
+func (r *Routing) remembered(ctx context.Context) []kademlia.Contact {
+	if r.cfg.Memory == nil {
+		return nil
+	}
+	var peers []kademlia.Contact
+	if err := r.cfg.Memory.Get(ctx, peersKey, &peers); err != nil {
+		return nil // none yet
+	}
+	return peers
 }
 
 // Manifest describes routing's capabilities, which the node serves like a
@@ -202,10 +240,13 @@ func (r *Routing) Run(ctx context.Context) {
 	wg.Wait()
 }
 
-// bootstrap returns the configured bootstrap nodes plus any found on the
-// local network.
+// bootstrap returns the configured bootstrap nodes, the peers remembered
+// from before, and any found on the local network.
 func (r *Routing) bootstrap(ctx context.Context) []string {
 	addrs := slices.Clone(r.cfg.Bootstrap)
+	for _, c := range r.remembered(ctx) {
+		addrs = append(addrs, c.Addrs...)
+	}
 	if r.cfg.MDNS {
 		for _, c := range r.browseLAN(ctx) {
 			addrs = append(addrs, c.Addrs...)
