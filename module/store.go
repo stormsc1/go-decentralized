@@ -5,6 +5,31 @@ import (
 	"encoding/json"
 )
 
+// CodeConflict fails a write that required a version the record or pair
+// doesn't have: someone else wrote first.
+const CodeConflict = "store.conflict"
+
+// Record is a record with its ID and version, which counts its writes from
+// 1.
+type Record struct {
+	ID      string          `json:"id"`
+	Version int64           `json:"version"`
+	Data    json.RawMessage `json:"record"`
+}
+
+// Decode decodes the record into v.
+func (r Record) Decode(v any) error { return Decode(r.Data, v) }
+
+// Pair is a key and its value, with the value's version.
+type Pair struct {
+	Key     string          `json:"key"`
+	Version int64           `json:"version"`
+	Value   json.RawMessage `json:"value"`
+}
+
+// Decode decodes the value into v.
+func (p Pair) Decode(v any) error { return Decode(p.Value, v) }
+
 // Entities are a module's records of one of its entity types, which its node
 // keeps. See spec/modules.md, "Storage".
 type Entities struct {
@@ -25,43 +50,98 @@ type Query struct {
 	Limit   int            `json:"limit,omitempty"`
 }
 
-// Put stores record, replacing any with the same ID.
-func (e Entities) Put(ctx context.Context, id string, record any) error {
-	return e.env.Call(ctx, "store.put", map[string]any{"entity": e.entity, "id": id, "record": record}, nil)
+// Put stores record, replacing any with the same ID, and returns its new
+// version.
+func (e Entities) Put(ctx context.Context, id string, record any) (int64, error) {
+	return e.put(ctx, id, record, nil)
 }
 
-// Get decodes the record with the given ID into out. It fails with
-// CodeNotFound if there's none.
-func (e Entities) Get(ctx context.Context, id string, out any) error {
-	var r struct {
-		Record json.RawMessage `json:"record"`
+// PutIf stores record only if the record with that ID has the given version,
+// 0 if there is none yet. Otherwise it fails with CodeConflict.
+func (e Entities) PutIf(ctx context.Context, id string, record any, version int64) (int64, error) {
+	return e.put(ctx, id, record, &version)
+}
+
+func (e Entities) put(ctx context.Context, id string, record any, ifVersion *int64) (int64, error) {
+	var out struct{ Version int64 }
+	in := map[string]any{"entity": e.entity, "id": id, "record": record}
+	if ifVersion != nil {
+		in["if_version"] = *ifVersion
 	}
+	return out.Version, e.env.Call(ctx, "store.put", in, &out)
+}
+
+// Get decodes the record with the given ID into out and returns its version.
+// It fails with CodeNotFound if there's none.
+func (e Entities) Get(ctx context.Context, id string, out any) (int64, error) {
+	var r Record
 	if err := e.env.Call(ctx, "store.get", map[string]any{"entity": e.entity, "id": id}, &r); err != nil {
-		return err
+		return 0, err
 	}
-	return Decode(r.Record, out)
+	return r.Version, r.Decode(out)
 }
 
 func (e Entities) Delete(ctx context.Context, id string) error {
 	return e.env.Call(ctx, "store.delete", map[string]any{"entity": e.entity, "id": id}, nil)
 }
 
-// Query decodes the records that match q into out, a pointer to a slice.
-func (e Entities) Query(ctx context.Context, q Query, out any) error {
-	var r struct {
-		Records json.RawMessage `json:"records"`
-	}
+// DeleteIf deletes the record only if it has the given version, else fails
+// with CodeConflict.
+func (e Entities) DeleteIf(ctx context.Context, id string, version int64) error {
+	return e.env.Call(ctx, "store.delete", map[string]any{"entity": e.entity, "id": id, "if_version": version}, nil)
+}
+
+// Query returns the records that match q.
+func (e Entities) Query(ctx context.Context, q Query) ([]Record, error) {
+	var out struct{ Records []Record }
 	in := struct {
 		Entity string `json:"entity"`
 		Query
 	}{e.entity, q}
-	if err := e.env.Call(ctx, "store.query", in, &r); err != nil {
-		return err
+	return out.Records, e.env.Call(ctx, "store.query", in, &out)
+}
+
+// A Batch is writes to the module's records, of any of its entity types,
+// that happen all or none. See Env.Batch.
+type Batch struct {
+	env Env
+	ops []map[string]any
+}
+
+// Batch starts a batch of writes to the module's records. Commit applies
+// them.
+func (env Env) Batch() *Batch { return &Batch{env: env} }
+
+func (b *Batch) add(op map[string]any, ifVersion *int64) *Batch {
+	if ifVersion != nil {
+		op["if_version"] = *ifVersion
 	}
-	if len(r.Records) == 0 || string(r.Records) == "null" {
-		r.Records = json.RawMessage("[]")
-	}
-	return Decode(r.Records, out)
+	b.ops = append(b.ops, op)
+	return b
+}
+
+func (b *Batch) Put(entity, id string, record any) *Batch {
+	return b.add(map[string]any{"op": "put", "entity": entity, "id": id, "record": record}, nil)
+}
+
+func (b *Batch) PutIf(entity, id string, record any, version int64) *Batch {
+	return b.add(map[string]any{"op": "put", "entity": entity, "id": id, "record": record}, &version)
+}
+
+func (b *Batch) Delete(entity, id string) *Batch {
+	return b.add(map[string]any{"op": "delete", "entity": entity, "id": id}, nil)
+}
+
+func (b *Batch) DeleteIf(entity, id string, version int64) *Batch {
+	return b.add(map[string]any{"op": "delete", "entity": entity, "id": id}, &version)
+}
+
+// Commit applies the batch's writes in order, all or none, and returns the
+// new version of each put, 0 for deletes. A conditional write that fails
+// fails the whole batch with CodeConflict.
+func (b *Batch) Commit(ctx context.Context) ([]int64, error) {
+	var out struct{ Versions []int64 }
+	return out.Versions, b.env.Call(ctx, "store.batch", map[string]any{"ops": b.ops}, &out)
 }
 
 // KV is a module's key-value pairs, which its node keeps.
@@ -70,41 +150,87 @@ type KV struct{ env Env }
 // KV returns the module's key-value pairs.
 func (env Env) KV() KV { return KV{env} }
 
-// Get decodes the value of key into out. It fails with CodeNotFound if the
-// key isn't there.
-func (kv KV) Get(ctx context.Context, key string, out any) error {
-	var r struct {
-		Value json.RawMessage `json:"value"`
+// Get decodes the value of key into out and returns its version. It fails
+// with CodeNotFound if the key isn't there.
+func (kv KV) Get(ctx context.Context, key string, out any) (int64, error) {
+	var p Pair
+	if err := kv.env.Call(ctx, "store.kv_get", map[string]string{"key": key}, &p); err != nil {
+		return 0, err
 	}
-	if err := kv.env.Call(ctx, "store.kv_get", map[string]string{"key": key}, &r); err != nil {
-		return err
-	}
-	return Decode(r.Value, out)
+	return p.Version, p.Decode(out)
 }
 
-func (kv KV) Put(ctx context.Context, key string, value any) error {
-	return kv.env.Call(ctx, "store.kv_put", map[string]any{"key": key, "value": value}, nil)
+// Put sets the value of key and returns its new version.
+func (kv KV) Put(ctx context.Context, key string, value any) (int64, error) {
+	var out struct{ Version int64 }
+	return out.Version, kv.env.Call(ctx, "store.kv_put", map[string]any{"key": key, "value": value}, &out)
+}
+
+// PutIf sets the value only if it has the given version, 0 if the key isn't
+// there yet. Otherwise it fails with CodeConflict.
+func (kv KV) PutIf(ctx context.Context, key string, value any, version int64) (int64, error) {
+	var out struct{ Version int64 }
+	return out.Version, kv.env.Call(ctx, "store.kv_put", map[string]any{"key": key, "value": value, "if_version": version}, &out)
 }
 
 func (kv KV) Delete(ctx context.Context, key string) error {
 	return kv.env.Call(ctx, "store.kv_delete", map[string]string{"key": key}, nil)
 }
 
-// Pair is a key and its value.
-type Pair struct {
-	Key   string          `json:"key"`
-	Value json.RawMessage `json:"value"`
+// DeleteIf deletes the key only if its value has the given version, else
+// fails with CodeConflict.
+func (kv KV) DeleteIf(ctx context.Context, key string, version int64) error {
+	return kv.env.Call(ctx, "store.kv_delete", map[string]any{"key": key, "if_version": version}, nil)
 }
 
 // List returns up to limit pairs whose key starts with prefix, by key.
 func (kv KV) List(ctx context.Context, prefix string, limit int) ([]Pair, error) {
-	var r struct {
-		Pairs []Pair `json:"pairs"`
-	}
+	var out struct{ Pairs []Pair }
 	in := map[string]any{"prefix": prefix}
 	if limit > 0 {
 		in["limit"] = limit
 	}
-	err := kv.env.Call(ctx, "store.kv_list", in, &r)
-	return r.Pairs, err
+	return out.Pairs, kv.env.Call(ctx, "store.kv_list", in, &out)
+}
+
+// A KVBatch is writes to the module's pairs that happen all or none. See
+// KV.Batch.
+type KVBatch struct {
+	env Env
+	ops []map[string]any
+}
+
+// Batch starts a batch of writes to the pairs. Commit applies them.
+func (kv KV) Batch() *KVBatch { return &KVBatch{env: kv.env} }
+
+func (b *KVBatch) add(op map[string]any, ifVersion *int64) *KVBatch {
+	if ifVersion != nil {
+		op["if_version"] = *ifVersion
+	}
+	b.ops = append(b.ops, op)
+	return b
+}
+
+func (b *KVBatch) Put(key string, value any) *KVBatch {
+	return b.add(map[string]any{"op": "put", "key": key, "value": value}, nil)
+}
+
+func (b *KVBatch) PutIf(key string, value any, version int64) *KVBatch {
+	return b.add(map[string]any{"op": "put", "key": key, "value": value}, &version)
+}
+
+func (b *KVBatch) Delete(key string) *KVBatch {
+	return b.add(map[string]any{"op": "delete", "key": key}, nil)
+}
+
+func (b *KVBatch) DeleteIf(key string, version int64) *KVBatch {
+	return b.add(map[string]any{"op": "delete", "key": key}, &version)
+}
+
+// Commit applies the batch's writes in order, all or none, and returns the
+// new version of each put, 0 for deletes. A conditional write that fails
+// fails the whole batch with CodeConflict.
+func (b *KVBatch) Commit(ctx context.Context) ([]int64, error) {
+	var out struct{ Versions []int64 }
+	return out.Versions, b.env.Call(ctx, "store.kv_batch", map[string]any{"ops": b.ops}, &out)
 }

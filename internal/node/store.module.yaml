@@ -13,18 +13,23 @@ capabilities:
         entity: {type: string}
         id: {$ref: "#/$defs/id"}
         record: {type: object, description: "Checked against the entity type's schema."}
+        if_version: {$ref: "#/$defs/if_version"}
+    output: {$ref: "#/$defs/version"}
   - name: get
-    description: Returns a record by ID.
+    description: Returns a record by ID, with its version.
     internal: true
     input: {$ref: "#/$defs/record_ref"}
-    output:
-      type: object
-      properties:
-        record: {type: object}
+    output: {$ref: "#/$defs/record"}
   - name: delete
     description: Deletes a record by ID, if there is one.
     internal: true
-    input: {$ref: "#/$defs/record_ref"}
+    input:
+      type: object
+      required: [entity, id]
+      properties:
+        entity: {type: string}
+        id: {$ref: "#/$defs/id"}
+        if_version: {$ref: "#/$defs/if_version"}
   - name: query
     description: Returns the records that match, by their indexed fields.
     internal: true
@@ -42,19 +47,36 @@ capabilities:
     output:
       type: object
       properties:
-        records: {type: array, items: {type: object}}
+        records: {type: array, items: {$ref: "#/$defs/record"}}
+  - name: batch
+    description: Writes records in order, all or none.
+    internal: true
+    input:
+      type: object
+      required: [ops]
+      properties:
+        ops:
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+            required: [op, entity, id]
+            properties:
+              op: {enum: [put, delete]}
+              entity: {type: string}
+              id: {$ref: "#/$defs/id"}
+              record: {type: object, description: For put.}
+              if_version: {$ref: "#/$defs/if_version"}
+    output: {$ref: "#/$defs/versions"}
   - name: kv_get
-    description: Returns the value of a key.
+    description: Returns the value of a key, with its version.
     internal: true
     input:
       type: object
       required: [key]
       properties:
         key: {$ref: "#/$defs/key"}
-    output:
-      type: object
-      properties:
-        value: {description: Any JSON value.}
+    output: {$ref: "#/$defs/pair"}
   - name: kv_put
     description: Sets the value of a key.
     internal: true
@@ -64,6 +86,8 @@ capabilities:
       properties:
         key: {$ref: "#/$defs/key"}
         value: {description: Any JSON value.}
+        if_version: {$ref: "#/$defs/if_version"}
+    output: {$ref: "#/$defs/version"}
   - name: kv_delete
     description: Deletes a key, if it's there.
     internal: true
@@ -72,6 +96,7 @@ capabilities:
       required: [key]
       properties:
         key: {$ref: "#/$defs/key"}
+        if_version: {$ref: "#/$defs/if_version"}
   - name: kv_list
     description: Lists the keys starting with prefix, and their values, by key.
     internal: true
@@ -83,19 +108,56 @@ capabilities:
     output:
       type: object
       properties:
-        pairs:
+        pairs: {type: array, items: {$ref: "#/$defs/pair"}}
+  - name: kv_batch
+    description: Writes pairs in order, all or none.
+    internal: true
+    input:
+      type: object
+      required: [ops]
+      properties:
+        ops:
           type: array
+          maxItems: 1000
           items:
             type: object
+            required: [op, key]
             properties:
-              key: {type: string}
-              value: {description: Any JSON value.}
+              op: {enum: [put, delete]}
+              key: {$ref: "#/$defs/key"}
+              value: {description: For put, any JSON value.}
+              if_version: {$ref: "#/$defs/if_version"}
+    output: {$ref: "#/$defs/versions"}
 $defs:
   id: {type: string, minLength: 1, maxLength: 256}
   key: {type: string, minLength: 1, maxLength: 512}
+  if_version:
+    type: integer
+    minimum: 0
+    description: "The version the record or pair must have for the write to happen, 0 for none yet; else the call fails with store.conflict. Unset means any."
+  version:
+    type: object
+    properties:
+      version: {type: integer, description: "The record's or pair's new version, counting its writes from 1."}
+  versions:
+    type: object
+    properties:
+      versions: {type: array, items: {type: integer}, description: The new version of each put, 0 for deletes.}
   record_ref:
     type: object
     required: [entity, id]
     properties:
       entity: {type: string}
       id: {$ref: "#/$defs/id"}
+  record:
+    type: object
+    properties:
+      id: {type: string}
+      version: {type: integer}
+      record: {type: object}
+  pair:
+    type: object
+    properties:
+      key: {type: string}
+      version: {type: integer}
+      value: {description: Any JSON value.}

@@ -73,8 +73,11 @@ Nodes keep data for their modules, each module's apart from the others'. Its dri
 
 - Records of the entity types in their manifest: `store.put`, `get`, `delete` and `query`. A record is a JSON object with an ID, up to 256 characters, and the node rejects records that don't match their type's schema with `invalid_argument`. Queries select and sort by indexed fields and the ID, and return up to 100 records unless they say, at most 1000.
 - Key-value pairs, of any JSON value: `store.kv_get`, `kv_put`, `kv_delete` and `kv_list`, which lists keys by prefix.
+- Batches: `store.batch` applies writes of both kinds in order, all or none.
 
-`get` and `kv_get` fail with `not_found` if there's nothing there. Go's API is `Env.Entities` and `Env.KV`.
+Every record and pair has a version, counting its writes from 1, which reads return and writes return anew. A write may require a version with `if_version`, 0 for "none yet": if the record or pair has another, the write, or the whole batch, fails with `store.conflict`. So several writers, e.g. the nodes of a pool sharing a store, don't overwrite each other unawares.
+
+`get` and `kv_get` fail with `not_found` if there's nothing there. Go's API is `Env.Entities`, `Env.KV` and `Env.Batch`.
 
 ## Signing
 

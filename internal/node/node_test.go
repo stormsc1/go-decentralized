@@ -37,10 +37,14 @@ capabilities:
   - name: node_name
     output: {type: object, properties: {name: {type: string}}}
   - name: note
-    description: Keeps a note, in the node's store.
+    description: Keeps a note, in the node's store, only if its version is as expected when if_version is set.
     input: {type: object}
+    output: {type: object, properties: {version: {type: integer}}}
   - name: notes
     description: Lists the notes, newest first.
+  - name: add_notes
+    description: Adds notes that don't exist yet, all or none.
+    input: {type: object, required: [notes], properties: {notes: {type: array}}}
   - name: poke
     access: network
     description: Tells subscribers who poked.
@@ -78,18 +82,39 @@ func (e echo) Handlers() map[string]module.Handler {
 			err := e.env.Call(ctx, "node.info", nil, &info)
 			return map[string]string{"name": info.Name}, err
 		}),
-		"note": module.HandlerFor(func(ctx context.Context, in map[string]any) (struct{}, error) {
+		"note": module.HandlerFor(func(ctx context.Context, in map[string]any) (map[string]int64, error) {
 			id, _ := in["id"].(string)
 			delete(in, "id")
-			if err := e.env.Entities("note").Put(ctx, id, in); err != nil {
-				return struct{}{}, err
+			var version int64
+			var err error
+			if ifVersion, ok := in["if_version"].(float64); ok {
+				delete(in, "if_version")
+				version, err = e.env.Entities("note").PutIf(ctx, id, in, int64(ifVersion))
+			} else {
+				version, err = e.env.Entities("note").Put(ctx, id, in)
 			}
-			return struct{}{}, e.env.Emit(ctx, "noted", map[string]any{"text": in["text"]})
+			if err != nil {
+				return nil, err
+			}
+			return map[string]int64{"version": version}, e.env.Emit(ctx, "noted", map[string]any{"text": in["text"]})
 		}),
 		"notes": module.HandlerFor(func(ctx context.Context, _ struct{}) (map[string]any, error) {
-			var notes []map[string]any
-			err := e.env.Entities("note").Query(ctx, module.Query{OrderBy: "time", Desc: true}, &notes)
+			records, err := e.env.Entities("note").Query(ctx, module.Query{OrderBy: "time", Desc: true})
+			notes := []json.RawMessage{}
+			for _, r := range records {
+				notes = append(notes, r.Data)
+			}
 			return map[string]any{"notes": notes}, err
+		}),
+		"add_notes": module.HandlerFor(func(ctx context.Context, in struct{ Notes []map[string]any }) (struct{}, error) {
+			b := e.env.Batch()
+			for _, note := range in.Notes {
+				id, _ := note["id"].(string)
+				delete(note, "id")
+				b.PutIf("note", id, note, 0)
+			}
+			_, err := b.Commit(ctx)
+			return struct{}{}, err
 		}),
 		"poke": module.HandlerFor(func(ctx context.Context, _ struct{}) (struct{}, error) {
 			return struct{}{}, e.env.Emit(ctx, "poked", map[string]string{"from": module.Caller(ctx)})
@@ -188,6 +213,24 @@ func testModule(t *testing.T, ctx context.Context, caller, callee *Node, calleeA
 	result, err := callee.Call(ctx, "echo.notes", nil)
 	if err != nil || string(result) != `{"notes":[{"text":"second","time":2},{"text":"first","time":1}]}` {
 		t.Fatalf("notes = %s, %v", result, err)
+	}
+	// Writes carry versions, and a write can require one; a batch is all or
+	// nothing.
+	if result, err := callee.Call(ctx, "echo.note", json.RawMessage(`{"id":"a","text":"first!","time":1,"if_version":1}`)); err != nil || string(result) != `{"version":2}` {
+		t.Fatalf("conditional note = %s, %v", result, err)
+	}
+	if _, err := callee.Call(ctx, "echo.note", json.RawMessage(`{"id":"a","text":"first?","time":1,"if_version":1}`)); module.Code(err) != module.CodeConflict {
+		t.Fatalf("stale conditional note: err = %v", err)
+	}
+	if _, err := callee.Call(ctx, "echo.add_notes", json.RawMessage(`{"notes":[{"id":"z","text":"only","time":9},{"id":"a","text":"clash","time":1}]}`)); module.Code(err) != module.CodeConflict {
+		t.Fatalf("batch adding an existing note: err = %v", err)
+	}
+	// Had the failed batch added z, adding it now would clash too.
+	if _, err := callee.Call(ctx, "echo.add_notes", json.RawMessage(`{"notes":[{"id":"z","text":"only","time":9}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := callee.Call(ctx, "echo.notes", nil); err != nil || string(result) != `{"notes":[{"text":"only","time":9},{"text":"second","time":2},{"text":"first!","time":1}]}` {
+		t.Fatalf("notes after the batch = %s, %v", result, err)
 	}
 	if _, err := callee.Call(ctx, "store.kv_put", json.RawMessage(`{"key":"k","value":1}`)); module.Code(err) != module.CodePermissionDenied {
 		t.Fatalf("a tool used a module's store: err = %v", err)

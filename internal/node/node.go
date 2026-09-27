@@ -30,7 +30,9 @@ type Node struct {
 	ID      string
 	Network *network.Network
 	routing *routing.Routing
-	store   store.Driver
+	store   store.Store
+	records store.EntityStore // the store's records
+	pairs   store.KVStore     // its pairs
 	key     ed25519.PrivateKey
 
 	// Process modules may call while later modules load.
@@ -68,7 +70,7 @@ var nodeManifest []byte
 // New starts every module listed in cfg: native ones from factories, and
 // process ones by running their command. Calls from other nodes arrive
 // through nw, and modules keep their data in st.
-func New(cfg Config, key ed25519.PrivateKey, nw *network.Network, st store.Driver, factories map[string]module.Factory) (_ *Node, err error) {
+func New(cfg Config, key ed25519.PrivateKey, nw *network.Network, st store.Store, factories map[string]module.Factory) (_ *Node, err error) {
 	n := &Node{
 		Config:   cfg,
 		ID:       module.NodeID(key.Public().(ed25519.PublicKey)),
@@ -79,6 +81,13 @@ func New(cfg Config, key ed25519.PrivateKey, nw *network.Network, st store.Drive
 		events:   map[string]*jsonschema.Schema{},
 		entities: map[string]entityType{},
 		subs:     map[*Subscription]struct{}{},
+	}
+	var ok bool
+	if n.records, ok = store.Entities(st); !ok {
+		return nil, fmt.Errorf("node %q: the store keeps no records", cfg.Name)
+	}
+	if n.pairs, ok = store.KV(st); !ok {
+		return nil, fmt.Errorf("node %q: the store keeps no key-value pairs", cfg.Name)
 	}
 	defer func() {
 		if err != nil {
@@ -202,7 +211,7 @@ func (n *Node) add(l *loaded, handlers map[string]handler) error {
 			return fmt.Errorf("%s entity %s: schema: %w", m.Name, e.Name, err)
 		}
 		for _, field := range e.Indexes {
-			if err := n.store.Index(context.Background(), m.Name, e.Name, field); err != nil {
+			if err := n.records.Index(context.Background(), m.Name, e.Name, field); err != nil {
 				return fmt.Errorf("%s entity %s: index %s: %w", m.Name, e.Name, field, err)
 			}
 		}
