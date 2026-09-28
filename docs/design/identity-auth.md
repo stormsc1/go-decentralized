@@ -1,6 +1,6 @@
 # Identity and auth: roots, app identities, credentials
 
-Status: proposal for review, 2026-09-28, from notes with the system architect. Nothing here is built beyond `did/` (did:key, root → device delegation, signed data) and the chat's per-browser key. **Open** marks what's still to decide.
+Status: proposal for review, 2026-09-28, from notes with the system architect; steps 1 and 2 of the order of work are built. **Open** marks what's still to decide.
 
 ## The architect's points
 
@@ -65,7 +65,7 @@ An **authorization** is `did.Signed` with the purpose `did.delegation`, its gran
 ## Order of work
 
 1. **Device keys** (built 2026-09-29): the scoped authorization in `did/`, the chat signing with device keys and showing the person, the session login on the node (`node.login`, see spec/modules.md, "Signing in") and capabilities knowing who they're for (`module.User`), the CLI as the first root holder (`identity authorize`), and the web app asking to be authorized. The request a device makes still travels by copy and paste; the vault replaces that.
-2. **The vault service**, as a module: passkey sign-in, wrapped roots it can't read, authorizing devices in the person's browser.
+2. **The vault service** (built 2026-09-29), as a module: `vault.open {proof}` and `vault.save {signed}`, see spec/identity.md, "Custody". The browser (web/src/identity.ts) derives the wrapping key and the proof from the passkey's PRF, or from a passphrase where there's no PRF, and the root is unwrapped only to sign the device's authorization; the vault knows the root's DID and the blob, nothing else. Replacing a blob takes the root's own signature, so a proof, or a device, can't lock the person out. Not yet: the vault is the one on the node serving the app, so an identity made on one node's vault can't sign in through another's (the app could ask which vault, and the node forward to it); re-wrapping when the passkey changes; recovery when it's lost; and rate limits against guessing passphrases online.
 3. **Profiles** at the person level, with avatars, served by home nodes.
 4. **Credentials:** the node's `identity.request` with OpenID4VP and SD-JWT VC verification; the first verifiers, email and OAuth accounts, issuing credentials; an EUDI wallet as the first external wallet.
 5. **A phone app** as a root holder, and **per-organisation identities** with BBS+ presentations, if either is wanted.

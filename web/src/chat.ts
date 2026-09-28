@@ -1,10 +1,12 @@
 // The chat web app, on a node's local API: the chat module's capabilities,
 // and its events over /v1/events. You are your root identity, a did:key;
-// this browser holds a device key the root authorized (for now by pasting
-// the authorization from the CLI, later through the vault), signs in to the
-// node with it, and signs every event with it. The node verifies, stores
-// and pushes them to the other members' nodes. See spec/identity.md and
+// this browser holds a device key the root authorized (through the vault,
+// with a passkey, see identity.ts), signs in to the node with it, and signs
+// every event with it. The node verifies, stores and pushes them to the
+// other members' nodes. See spec/identity.md and
 // docs/design/identity-auth.md.
+
+import { Device, Vault, signIn } from './identity'
 
 interface User {
   id: string // the person's DID
@@ -35,14 +37,6 @@ interface Event {
   time: string
 }
 
-// Signed is data someone signed, as spec/identity.md carries it.
-interface Signed {
-  data: string // base64
-  signer: string
-  sig: string // base64
-  delegation?: Signed
-}
-
 // A message as shown: its latest text, and its reactions.
 interface Message {
   event: Event
@@ -54,122 +48,9 @@ interface Message {
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const who = $<HTMLDialogElement>('who')
 const pick = $<HTMLDialogElement>('pick')
-const authorizeDialog = $<HTMLDialogElement>('authorize')
+const signin = $<HTMLDialogElement>('signin')
 const statusEl = $('status')
-const encoder = new TextEncoder()
-
-// --- Identity -------------------------------------------------------------
-
-const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-
-// base58 encodes bytes in base58btc, as did:key needs.
-function base58(bytes: Uint8Array): string {
-  let n = 0n
-  for (const b of bytes) n = (n << 8n) | BigInt(b)
-  let out = ''
-  while (n > 0n) {
-    out = alphabet[Number(n % 58n)] + out
-    n /= 58n
-  }
-  for (const b of bytes) {
-    if (b !== 0) break
-    out = '1' + out
-  }
-  return out
-}
-
-const base64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes))
-const unbase64 = (s: string) => Uint8Array.from(atob(s), c => c.charCodeAt(0))
-
-// idb opens the browser's small database for the key and its authorization.
-function idb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('chat', 1)
-    req.onupgradeneeded = () => req.result.createObjectStore('keys')
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-}
-
-async function idbGet<T>(key: string): Promise<T | undefined> {
-  const db = await idb()
-  return new Promise((resolve, reject) => {
-    const req = db.transaction('keys').objectStore('keys').get(key)
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-}
-
-async function idbPut(key: string, value: unknown): Promise<void> {
-  const db = await idb()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('keys', 'readwrite')
-    tx.objectStore('keys').put(value, key)
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
-  })
-}
-
-// Device is this browser's key, and the root's authorization of it.
-class Device {
-  constructor(
-    readonly did: string,
-    private keys: CryptoKeyPair,
-    public authorization: Signed | undefined,
-  ) {}
-
-  // load returns the device kept in this browser, making a key the first
-  // time.
-  static async load(): Promise<Device> {
-    let keys = await idbGet<CryptoKeyPair>('device')
-    if (!keys) {
-      keys = (await crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify'])) as CryptoKeyPair
-      await idbPut('device', keys)
-    }
-    const raw = new Uint8Array(await crypto.subtle.exportKey('raw', keys.publicKey))
-    const multicodec = new Uint8Array([0xed, 0x01, ...raw]) // ed25519-pub
-    return new Device('did:key:z' + base58(multicodec), keys, await idbGet<Signed>('authorization'))
-  }
-
-  // person is the root the device acts for.
-  get person(): string {
-    return this.authorization!.signer
-  }
-
-  // authorized reports whether the device holds an authorization for itself
-  // that hasn't expired.
-  authorized(): boolean {
-    const a = this.authorization
-    if (!a) return false
-    try {
-      const grant = JSON.parse(new TextDecoder().decode(unbase64(a.data)))
-      return grant.device === this.did && new Date(grant.expires).getTime() > Date.now() + 60_000
-    } catch {
-      return false
-    }
-  }
-
-  async authorize(pasted: string): Promise<void> {
-    const a: Signed = JSON.parse(pasted)
-    if (!a.data || !a.signer || !a.sig) throw new Error('not an authorization')
-    this.authorization = a
-    if (!this.authorized()) {
-      this.authorization = undefined
-      throw new Error("this authorization isn't for this device, or has expired")
-    }
-    await idbPut('authorization', a)
-  }
-
-  // sign signs v for purpose, for the root: as nodes do, over
-  // "decentralized-signature" NUL purpose NUL data (spec/modules.md,
-  // "Signing"), carrying the root's delegation.
-  async sign(purpose: string, v: unknown): Promise<Signed> {
-    const data = encoder.encode(JSON.stringify(v))
-    const message = new Uint8Array([...encoder.encode('decentralized-signature\0'), ...encoder.encode(purpose), 0, ...data])
-    const sig = new Uint8Array(await crypto.subtle.sign('Ed25519', this.keys.privateKey, message))
-    return { data: base64(data), signer: this.did, sig: base64(sig), delegation: this.authorization }
-  }
-}
+const vault = new Vault()
 
 // --- The node --------------------------------------------------------------
 
@@ -215,17 +96,33 @@ async function post(kind: Event['kind'], body: object): Promise<Event | undefine
   return submit({ channel: current.id, author: me.id, kind, body, parents: current.heads, time: new Date().toISOString() }).catch(fail)
 }
 
-// getAuthorized has the root authorize this device, if it isn't yet.
+// getAuthorized has the root authorize this device, if it isn't yet: through
+// the vault with a passkey or a passphrase, or by pasting an authorization a
+// root holder such as the CLI made.
 async function getAuthorized(): Promise<void> {
+  $('device-did').textContent = device.did
+  $('copy-device').onclick = () => navigator.clipboard.writeText(device.did).catch(fail)
+  const value = (id: string) => $<HTMLInputElement | HTMLTextAreaElement>(id).value
   while (!device.authorized()) {
-    $('device-did').textContent = device.did
-    $('copy-device').onclick = () => navigator.clipboard.writeText(device.did).catch(fail)
-    const pasted = $<HTMLTextAreaElement>('authorization')
-    pasted.value = ''
-    authorizeDialog.showModal()
-    await new Promise<void>(resolve => (authorizeDialog.onclose = () => resolve()))
+    signin.returnValue = ''
+    signin.showModal()
+    await new Promise<void>(resolve => (signin.onclose = () => resolve()))
+    statusEl.textContent = 'Signing in…'
     try {
-      await device.authorize(pasted.value.trim())
+      switch (signin.returnValue) {
+        case 'passkey':
+        case 'create':
+          await signIn.withPasskey(device, vault, signin.returnValue === 'create')
+          break
+        case 'passphrase':
+        case 'passphrase-create':
+          await signIn.withPassphrase(device, vault, value('handle'), value('passphrase'), signin.returnValue === 'passphrase-create')
+          break
+        case 'paste':
+          await signIn.withAuthorization(device, value('authorization').trim())
+          break
+      }
+      statusEl.textContent = ''
     } catch (err) {
       fail(err)
     }

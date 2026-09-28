@@ -7,15 +7,27 @@
     <link rel="stylesheet" href="/src/chat.css" />
   </head>
   <body>
-    <dialog id="authorize">
+    <dialog id="signin">
       <form method="dialog">
-        <h1>Authorize this device</h1>
-        <p>This browser holds a device key. Your root identity must authorize it before you can chat. In the CLI, run:</p>
-        <pre>identity authorize <span id="device-did"></span></pre>
-        <p class="row"><button id="copy-device" type="button">Copy the device's DID</button></p>
-        <p>Then paste what it prints here:</p>
-        <textarea id="authorization" required rows="4" placeholder='{"data":"…","signer":"did:key:z…","sig":"…"}'></textarea>
-        <button>Authorize</button>
+        <h1>Sign in</h1>
+        <p>This browser holds a device key. Your identity must authorize it before you can chat.</p>
+        <div class="choices">
+          <button value="passkey">Sign in with your passkey</button>
+          <button value="create">New here? Create an identity with a passkey</button>
+        </div>
+        <details>
+          <summary>Use a passphrase instead</summary>
+          <input id="handle" type="text" placeholder="A handle, e.g. your email" autocomplete="username" />
+          <input id="passphrase" type="password" placeholder="A passphrase of 12 characters or more" autocomplete="current-password" />
+          <div class="row"><button value="passphrase-create">Create an identity</button><button value="passphrase">Sign in</button></div>
+        </details>
+        <details>
+          <summary>Paste an authorization (developers)</summary>
+          <p>In the CLI, run <code>identity authorize <span id="device-did"></span></code> and paste what it prints:</p>
+          <p class="row"><button id="copy-device" type="button">Copy the device's DID</button></p>
+          <textarea id="authorization" rows="4" placeholder='{"data":"…","signer":"did:key:z…","sig":"…"}'></textarea>
+          <button value="paste">Authorize</button>
+        </details>
       </form>
     </dialog>
     <dialog id="who">
