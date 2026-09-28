@@ -41,8 +41,8 @@ type Event struct {
 }
 
 // StoreSpec is a store a module needs: of records of the entity types it
-// lists, or of key-value pairs. The node binds it to one of its own stores
-// of that kind, which the module then uses as Env.Store.
+// lists, of key-value pairs, or of blobs. The node binds it to one of its
+// own stores of that kind, which the module then uses as Env.Store.
 type StoreSpec struct {
 	Name        string `yaml:"name" json:"name"`
 	Type        string `yaml:"type" json:"type"`
@@ -55,9 +55,10 @@ type StoreSpec struct {
 const (
 	KindEntity = "entity"
 	KindKV     = "kv"
+	KindBlob   = "blob"
 )
 
-var kinds = []string{KindEntity, KindKV}
+var kinds = []string{KindEntity, KindKV, KindBlob}
 
 // Entity is a type of record a module keeps in one of its stores.
 type Entity struct {

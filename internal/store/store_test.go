@@ -22,12 +22,12 @@ func TestOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	for _, kind := range store.Kinds {
+	for _, kind := range []string{store.KindEntity, store.KindKV} {
 		if !store.Supports(s, kind) {
 			t.Errorf("SQLite doesn't support %s", kind)
 		}
 	}
-	if store.Supports(s, "blob") {
+	if store.Supports(s, store.KindBlob) {
 		t.Error("SQLite supports blobs")
 	}
 	if store.Supports(closer{}, store.KindKV) {

@@ -1,8 +1,8 @@
 // Package store keeps modules' data on a node, in a namespace per module and
 // store. There are kinds of stores, each with an interface of its own:
-// records of the entity types modules declare (EntityStore, entity_store.go)
-// and key-value pairs (KVStore, kv_store.go); blobs and more will follow. A
-// driver, in a package of its own such as sqlite, implements the kinds it
+// records of the entity types modules declare (EntityStore, entity_store.go),
+// key-value pairs (KVStore, kv_store.go) and blobs (BlobStore, blob_store.go).
+// A driver, in a package of its own such as sqlite, implements the kinds it
 // supports and registers itself, and a node binds each store a module
 // declares to a driver that supports its kind. Drivers are compiled into the
 // node. See spec/modules.md, "Storage".
@@ -22,10 +22,11 @@ import (
 const (
 	KindEntity = "entity"
 	KindKV     = "kv"
+	KindBlob   = "blob"
 )
 
 // Kinds lists the kinds there are.
-var Kinds = []string{KindEntity, KindKV}
+var Kinds = []string{KindEntity, KindKV, KindBlob}
 
 // Config configures a store, as a node definition declares it: which driver,
 // and the options that driver takes, e.g. path for sqlite.
@@ -56,7 +57,7 @@ func (c *Config) UnmarshalYAML(n *yaml.Node) error {
 }
 
 // A Store is an open database. It implements the kinds it supports, see
-// Entities and KV.
+// Entities, KV and Blobs.
 type Store interface {
 	Close() error
 }
@@ -113,6 +114,15 @@ func KV(s Store) (KVStore, bool) {
 	return k.KV(), true
 }
 
+// Blobs returns s as a store of blobs, if it is one.
+func Blobs(s Store) (BlobStore, bool) {
+	b, ok := s.(interface{ Blobs() BlobStore })
+	if !ok {
+		return nil, false
+	}
+	return b.Blobs(), true
+}
+
 // Supports reports whether s is a store of the given kind.
 func Supports(s Store, kind string) bool {
 	switch kind {
@@ -121,6 +131,9 @@ func Supports(s Store, kind string) bool {
 		return ok
 	case KindKV:
 		_, ok := KV(s)
+		return ok
+	case KindBlob:
+		_, ok := Blobs(s)
 		return ok
 	}
 	return false

@@ -1,18 +1,21 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"slices"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"go-decentralized/internal/store"
-	_ "go-decentralized/internal/store/sqlite" // the drivers compiled into the node
+	_ "go-decentralized/internal/store/file" // the drivers compiled into the node
+	_ "go-decentralized/internal/store/sqlite"
 	"go-decentralized/module"
 )
 
@@ -123,16 +126,21 @@ func (n *Node) local(ns string) store.Values {
 // keep each module's data apart: a module only reaches its own.
 func (n *Node) storeHandlers() map[string]module.Handler {
 	return map[string]module.Handler{
-		"put":       module.HandlerFor(n.storePut),
-		"get":       module.HandlerFor(n.storeGet),
-		"delete":    module.HandlerFor(n.storeDelete),
-		"query":     module.HandlerFor(n.storeQuery),
-		"batch":     module.HandlerFor(n.storeBatch),
-		"kv_get":    module.HandlerFor(n.kvGet),
-		"kv_put":    module.HandlerFor(n.kvPut),
-		"kv_delete": module.HandlerFor(n.kvDelete),
-		"kv_list":   module.HandlerFor(n.kvList),
-		"kv_batch":  module.HandlerFor(n.kvBatch),
+		"put":         module.HandlerFor(n.storePut),
+		"get":         module.HandlerFor(n.storeGet),
+		"delete":      module.HandlerFor(n.storeDelete),
+		"query":       module.HandlerFor(n.storeQuery),
+		"batch":       module.HandlerFor(n.storeBatch),
+		"kv_get":      module.HandlerFor(n.kvGet),
+		"kv_put":      module.HandlerFor(n.kvPut),
+		"kv_delete":   module.HandlerFor(n.kvDelete),
+		"kv_list":     module.HandlerFor(n.kvList),
+		"kv_batch":    module.HandlerFor(n.kvBatch),
+		"blob_put":    module.HandlerFor(n.blobPut),
+		"blob_get":    module.HandlerFor(n.blobGet),
+		"blob_stat":   module.HandlerFor(n.blobStat),
+		"blob_delete": module.HandlerFor(n.blobDelete),
+		"blob_list":   module.HandlerFor(n.blobList),
 	}
 }
 
@@ -189,6 +197,17 @@ func (n *Node) pairsOf(ctx context.Context, name string) (string, store.KVStore,
 	}
 	pairs, _ := store.KV(s)
 	return ns, pairs, nil
+}
+
+// blobsOf returns the calling module's blob store called name, and its
+// namespace.
+func (n *Node) blobsOf(ctx context.Context, name string) (string, store.BlobStore, error) {
+	_, ns, s, err := n.resolve(ctx, name, store.KindBlob)
+	if err != nil {
+		return "", nil, err
+	}
+	blobs, _ := store.Blobs(s)
+	return ns, blobs, nil
 }
 
 // entity returns the entity type of the calling module's store.
@@ -442,4 +461,86 @@ func (n *Node) kvBatch(ctx context.Context, in struct {
 	}
 	versions, err := pairs.Batch(ctx, ns, ops)
 	return versionsOutput{versions}, storeError(err, "batch")
+}
+
+type blobKey struct {
+	storeRef
+	Key string `json:"key"`
+}
+
+// blob is a blob with its bytes, on the wire.
+type blob struct {
+	store.BlobInfo
+	Data []byte `json:"data"`
+}
+
+func (n *Node) blobPut(ctx context.Context, in struct {
+	blobKey
+	ContentType string `json:"content_type"`
+	Data        []byte `json:"data"`
+}) (struct{}, error) {
+	ns, blobs, err := n.blobsOf(ctx, in.Store)
+	if err != nil {
+		return struct{}{}, err
+	}
+	if len(in.Data) > module.MaxBlob {
+		return struct{}{}, module.Errorf(module.CodeInvalidArgument, "a blob is at most %d bytes in one call", module.MaxBlob)
+	}
+	return struct{}{}, storeError(blobs.Put(ctx, ns, in.Key, bytes.NewReader(in.Data), in.ContentType), "blob "+in.Key)
+}
+
+func (n *Node) blobGet(ctx context.Context, in blobKey) (blob, error) {
+	ns, blobs, err := n.blobsOf(ctx, in.Store)
+	if err != nil {
+		return blob{}, err
+	}
+	r, info, err := blobs.Get(ctx, ns, in.Key)
+	if err != nil {
+		return blob{}, storeError(err, "blob "+in.Key)
+	}
+	defer r.Close()
+	if info.Size > module.MaxBlob {
+		return blob{}, module.Errorf(module.CodeInvalidArgument, "blob %s is %d bytes, more than one call carries", in.Key, info.Size)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return blob{}, err
+	}
+	return blob{BlobInfo: info, Data: data}, nil
+}
+
+func (n *Node) blobStat(ctx context.Context, in blobKey) (store.BlobInfo, error) {
+	ns, blobs, err := n.blobsOf(ctx, in.Store)
+	if err != nil {
+		return store.BlobInfo{}, err
+	}
+	info, err := blobs.Stat(ctx, ns, in.Key)
+	return info, storeError(err, "blob "+in.Key)
+}
+
+func (n *Node) blobDelete(ctx context.Context, in blobKey) (struct{}, error) {
+	ns, blobs, err := n.blobsOf(ctx, in.Store)
+	if err != nil {
+		return struct{}{}, err
+	}
+	return struct{}{}, storeError(blobs.Delete(ctx, ns, in.Key), "blob "+in.Key)
+}
+
+func (n *Node) blobList(ctx context.Context, in struct {
+	storeRef
+	Prefix string `json:"prefix"`
+	Limit  int    `json:"limit"`
+}) (map[string][]store.BlobInfo, error) {
+	ns, blobs, err := n.blobsOf(ctx, in.Store)
+	if err != nil {
+		return nil, err
+	}
+	if in.Limit == 0 {
+		in.Limit = defaultLimit
+	}
+	found, err := blobs.List(ctx, ns, in.Prefix, in.Limit)
+	if found == nil {
+		found = []store.BlobInfo{}
+	}
+	return map[string][]store.BlobInfo{"blobs": found}, err
 }

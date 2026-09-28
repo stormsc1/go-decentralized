@@ -57,6 +57,15 @@ capabilities:
   - name: poke_node
     description: Pokes the node with the given ID, without waiting.
     input: {type: object, required: [id], properties: {id: {type: string}}}
+  - name: provide
+    description: Announces this node as a provider of a key.
+    input: {type: object, required: [key], properties: {key: {type: string}}}
+  - name: keep
+    description: Keeps a file in the blob store.
+    input: {type: object, required: [key, data], properties: {key: {type: string}, data: {type: string}, content_type: {type: string}}}
+  - name: file
+    description: Returns a file kept.
+    input: {type: object, required: [key], properties: {key: {type: string}}}
 events:
   - name: noted
     schema: {type: object, required: [text], properties: {text: {type: string}}}
@@ -72,6 +81,8 @@ stores:
           required: [text, time]
           properties: {text: {type: string}, time: {type: integer}}
         indexes: [time]
+  - name: files
+    type: blob
 config:
   type: object
   properties: {greeting: {type: string}}
@@ -140,6 +151,23 @@ func (e echo) Handlers() map[string]module.Handler {
 		}),
 		"poke_node": module.HandlerFor(func(ctx context.Context, in struct{ ID string }) (struct{}, error) {
 			return struct{}{}, e.env.NotifyNode(ctx, in.ID, "echo.poke", nil)
+		}),
+		"provide": module.HandlerFor(func(ctx context.Context, in struct{ Key string }) (struct{}, error) {
+			return struct{}{}, e.env.Call(ctx, "routing.provide", map[string]string{"key": in.Key}, nil)
+		}),
+		"keep": module.HandlerFor(func(ctx context.Context, in struct {
+			Key, Data   string
+			ContentType string `json:"content_type"`
+		}) (struct{}, error) {
+			return struct{}{}, e.env.Blobs().Put(ctx, in.Key, []byte(in.Data), in.ContentType)
+		}),
+		"file": module.HandlerFor(func(ctx context.Context, in struct{ Key string }) (map[string]any, error) {
+			data, info, err := e.env.Blobs().Get(ctx, in.Key)
+			if err != nil {
+				return nil, err
+			}
+			list, err := e.env.Blobs().List(ctx, "", 0)
+			return map[string]any{"data": string(data), "content_type": info.ContentType, "size": info.Size, "count": len(list)}, err
 		}),
 	}
 }
@@ -380,27 +408,41 @@ func TestStores(t *testing.T) {
 		return Config{Name: "test", Network: NetworkConfig{MDNS: new(bool)}, Stores: stores, Modules: []ModuleConfig{{Name: "echo", Stores: bindings}}}
 	}
 	memory := store.Config{Options: store.Options{"path": ":memory:"}}
-	one := map[string]store.Config{"a": memory}
-	two := map[string]store.Config{"a": memory, "b": memory}
+	files := store.Config{Driver: "file"}
+	one := map[string]store.Config{"a": memory, "f": files}
+	two := map[string]store.Config{"a": memory, "b": memory, "f": files}
 	for _, bad := range []struct {
 		cfg  Config
 		want string
 	}{
 		{cfg(one, nil), "isn't bound"}, // even with one store: bindings are explicit
-		{cfg(two, map[string]string{"notes": "c"}), "doesn't have"},
-		{cfg(one, map[string]string{"notes": "local"}), "the node's own"},
-		{cfg(one, map[string]string{"notes": "a", "other": "a"}), "doesn't declare"},
+		{cfg(two, map[string]string{"notes": "c", "files": "f"}), "doesn't have"},
+		{cfg(one, map[string]string{"notes": "local", "files": "f"}), "the node's own"},
+		{cfg(one, map[string]string{"notes": "a", "files": "f", "other": "a"}), "doesn't declare"},
+		{cfg(one, map[string]string{"notes": "a", "files": "a"}), "keeps no blob data"}, // kinds must match
+		{cfg(one, map[string]string{"notes": "f", "files": "f"}), "keeps no entity data"},
 	} {
 		if _, err := newNode(t, bad.cfg); err == nil || !strings.Contains(err.Error(), bad.want) {
 			t.Errorf("New with %+v: err = %v, want %q", bad.cfg.Modules[0].Stores, err, bad.want)
 		}
 	}
-	n, err := newNode(t, cfg(two, map[string]string{"notes": "b"}))
+	n, err := newNode(t, cfg(two, map[string]string{"notes": "b", "files": "f"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := n.Call(ctx, "echo.note", json.RawMessage(`{"id":"a","text":"bound","time":1}`)); err != nil {
 		t.Fatal(err)
+	}
+	// Blobs: bytes with a content type, in a store of their own kind.
+	if _, err := n.Call(ctx, "echo.file", json.RawMessage(`{"key":"pic"}`)); module.Code(err) != module.CodeNotFound {
+		t.Fatalf("got a blob that isn't there: err = %v", err)
+	}
+	if _, err := n.Call(ctx, "echo.keep", json.RawMessage(`{"key":"pic","data":"PNG","content_type":"image/png"}`)); err != nil {
+		t.Fatal(err)
+	}
+	result, err := n.Call(ctx, "echo.file", json.RawMessage(`{"key":"pic"}`))
+	if err != nil || string(result) != `{"content_type":"image/png","count":1,"data":"PNG","size":3}` {
+		t.Fatalf("file = %s, %v", result, err)
 	}
 	// The node's own parts keep their state in the local store.
 	if err := n.local("test").Put(ctx, "k", 1); err != nil {
@@ -515,9 +557,10 @@ name: test
 network: {mdns: false}
 stores:
   main: {path: ":memory:"}
+  files: {driver: file}
 modules:
   - name: echo
-    stores: {notes: main}
+    stores: {notes: main, files: files}
     config: `+config+`
 `))
 		if err != nil {
@@ -606,12 +649,12 @@ func launch(t *testing.T, bootstrap []string, mc ModuleConfig, opts ...func(*Con
 		t.Fatal(err)
 	}
 	if mc.Stores == nil {
-		mc.Stores = map[string]string{"notes": "main"} // echo's store
+		mc.Stores = map[string]string{"notes": "main", "files": "files"} // echo's stores
 	}
 	cfg := Config{
 		Name:    "test",
 		Network: NetworkConfig{Bootstrap: bootstrap, MDNS: new(bool)},
-		Stores:  map[string]store.Config{"main": {Options: store.Options{"path": ":memory:"}}},
+		Stores:  map[string]store.Config{"main": {Options: store.Options{"path": ":memory:"}}, "files": {Driver: "file"}},
 		Modules: []ModuleConfig{mc},
 	}
 	for _, opt := range opts {

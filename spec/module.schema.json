@@ -105,8 +105,8 @@
           "description": "Unique in the module: how the module names the store in store.* calls."
         },
         "type": {
-          "enum": ["entity", "kv"],
-          "description": "entity: records of the entity types below. kv: key-value pairs."
+          "enum": ["entity", "kv", "blob"],
+          "description": "entity: records of the entity types below. kv: key-value pairs. blob: bytes under keys, with a content type."
         },
         "description": { "type": "string" },
         "entities": {

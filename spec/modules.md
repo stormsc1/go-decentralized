@@ -103,16 +103,19 @@ Capabilities decide what a person may do: the chat, for instance, lists and read
 
 ## Storage
 
-A module declares the stores it needs in its manifest, each of a kind: `entity`, records of the entity types it lists, or `kv`, key-value pairs. The node definition declares the node's stores, each on a driver compiled into the node with the options that driver takes (SQLite so far), and each module's block binds every store the module declares to one that keeps that kind of data; a store left unbound, or bound to one of another kind, keeps the node from starting. Every node also has a store called `local`, for its own parts, which modules can't use, so nodes sharing a store never share it. Each module's data is apart from the others', in a namespace per module and store.
+A module declares the stores it needs in its manifest, each of a kind: `entity`, records of the entity types it lists; `kv`, key-value pairs; or `blob`, bytes under keys with a content type. The node definition declares the node's stores, each on a driver compiled into the node with the options that driver takes (`sqlite` for records and pairs, `file` for blobs, so far), and each module's block binds every store the module declares to one that keeps that kind of data; a store left unbound, or bound to one of another kind, keeps the node from starting. Every node also has a store called `local`, for its own parts, which modules can't use, so nodes sharing a store never share it. Each module's data is apart from the others', in a namespace per module and store.
 
 ```yaml
 # node definition
 stores:
   main: {driver: sqlite}                     # <node name>.main.db, in the data directory
   cache: {driver: sqlite, path: ":memory:"}
+  files: {driver: file}                      # blobs/, in the data directory
 modules:
   - name: chat
     stores: {events: main, seen: cache}      # the module's names for its stores
+  - name: profile
+    stores: {data: main, avatars: files}
 ```
 
 A module with data of a shape of its own, such as its own Postgres tables, takes what it needs to connect as configuration (see "Configuration") and connects itself; the node isn't involved.
@@ -122,10 +125,11 @@ Modules reach their records and pairs through the `store` capabilities (schemas:
 - Records of the entity types in their manifest: `store.put`, `get`, `delete` and `query`. A record is a JSON object with an ID, up to 256 characters, and the node rejects records that don't match their type's schema with `invalid_argument`. Queries select and sort by indexed fields and the ID, and return up to 100 records unless they say, at most 1000.
 - Key-value pairs, of any JSON value: `store.kv_get`, `kv_put`, `kv_delete` and `kv_list`, which lists keys by prefix.
 - Batches: `store.batch` applies writes of both kinds in order, all or none.
+- Blobs: `store.blob_put`, `blob_get`, `blob_stat`, `blob_delete` and `blob_list`. Bytes travel base64-encoded in the call, so a blob is at most 512 KiB until there are streams; blobs have no versions, the last write wins.
 
 Every record and pair has a version, counting its writes from 1, which reads return and writes return anew. A write may require a version with `if_version`, 0 for "none yet": if the record or pair has another, the write, or the whole batch, fails with `store.conflict`. So several writers, e.g. the nodes of a pool sharing a store, don't overwrite each other unawares.
 
-`get` and `kv_get` fail with `not_found` if there's nothing there. Go's API is `Env.Store`, and `Env.Entities`, `Env.KV` and `Env.Batch` for a module's only store of each kind.
+`get`, `kv_get` and `blob_get` fail with `not_found` if there's nothing there. Go's API is `Env.Store`, and `Env.Entities`, `Env.KV`, `Env.Batch` and `Env.Blobs` for a module's only store of each kind.
 
 ## Signing
 

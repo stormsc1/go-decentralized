@@ -3,11 +3,15 @@ package module
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 // CodeConflict fails a write that required a version the record or pair
 // doesn't have: someone else wrote first.
 const CodeConflict = "store.conflict"
+
+// MaxBlob is the most bytes one blob call carries, until there are streams.
+const MaxBlob = 512 << 10
 
 // Record is a record with its ID and version, which counts its writes from
 // 1.
@@ -51,6 +55,9 @@ func (env Env) KV() KV { return env.Store("").KV() }
 // Batch starts a batch of writes to the records in the module's only entity
 // store.
 func (env Env) Batch() *Batch { return env.Store("").Batch() }
+
+// Blobs returns the module's blobs, in its only blob store.
+func (env Env) Blobs() Blobs { return env.Store("").Blobs() }
 
 // call calls a store capability about this store.
 func (s Store) call(ctx context.Context, name string, in map[string]any, out any) error {
@@ -265,4 +272,55 @@ func (b *KVBatch) DeleteIf(key string, version int64) *KVBatch {
 func (b *KVBatch) Commit(ctx context.Context) ([]int64, error) {
 	var out struct{ Versions []int64 }
 	return out.Versions, b.store.call(ctx, "kv_batch", map[string]any{"ops": b.ops}, &out)
+}
+
+// BlobInfo describes a blob: bytes under a key, with a content type. Blobs
+// have no versions: the last write wins.
+type BlobInfo struct {
+	Key         string    `json:"key"`
+	Size        int64     `json:"size"`
+	ContentType string    `json:"content_type,omitempty"`
+	Modified    time.Time `json:"modified"`
+}
+
+// Blobs are the blobs of one of a module's stores.
+type Blobs struct{ store Store }
+
+// Blobs returns the store's blobs.
+func (s Store) Blobs() Blobs { return Blobs{s} }
+
+// Put writes data under key, replacing what was there: up to MaxBlob bytes.
+func (b Blobs) Put(ctx context.Context, key string, data []byte, contentType string) error {
+	return b.store.call(ctx, "blob_put", map[string]any{"key": key, "data": data, "content_type": contentType}, nil)
+}
+
+// Get returns the blob's bytes and description. It fails with CodeNotFound
+// if the key isn't there.
+func (b Blobs) Get(ctx context.Context, key string) ([]byte, BlobInfo, error) {
+	var out struct {
+		BlobInfo
+		Data []byte `json:"data"`
+	}
+	err := b.store.call(ctx, "blob_get", map[string]any{"key": key}, &out)
+	return out.Data, out.BlobInfo, err
+}
+
+// Stat describes the blob without reading it.
+func (b Blobs) Stat(ctx context.Context, key string) (BlobInfo, error) {
+	var out BlobInfo
+	return out, b.store.call(ctx, "blob_stat", map[string]any{"key": key}, &out)
+}
+
+func (b Blobs) Delete(ctx context.Context, key string) error {
+	return b.store.call(ctx, "blob_delete", map[string]any{"key": key}, nil)
+}
+
+// List describes up to limit blobs whose key starts with prefix, by key.
+func (b Blobs) List(ctx context.Context, prefix string, limit int) ([]BlobInfo, error) {
+	var out struct{ Blobs []BlobInfo }
+	in := map[string]any{"prefix": prefix}
+	if limit > 0 {
+		in["limit"] = limit
+	}
+	return out.Blobs, b.store.call(ctx, "blob_list", in, &out)
 }
