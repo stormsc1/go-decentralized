@@ -207,10 +207,11 @@ func (s *sessions) logout(w http.ResponseWriter, r *http.Request) {
 const keepAlive = 30 * time.Second
 
 // serveEvents streams the events the query's refs name, as server-sent
-// events: each has its ref as its type and its body as its data. The stream
-// ends if the subscriber falls too far behind, see Subscription.Events.
+// events: each has its ref as its type and its body as its data. Events for
+// particular people reach only them, so the stream is for whoever signed in.
+// It ends if the subscriber falls too far behind, see Subscription.Events.
 func (n *Node) serveEvents(w http.ResponseWriter, r *http.Request) {
-	sub, err := n.Subscribe(r.URL.Query()["ref"]...)
+	sub, err := n.SubscribeAs(module.User(n.sessions.context(r)), r.URL.Query()["ref"]...)
 	if err != nil {
 		e := module.ErrorOf(err)
 		writeJSON(w, status(e.Code), e)

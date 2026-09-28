@@ -89,6 +89,8 @@ Modules tell subscribers what happens, such as a message arriving, with the even
 
 Subscribers are local tools, such as apps, on the local API: `GET /v1/events?ref=<module>.<event>&ref=...` streams the events named as [server-sent events](https://html.spec.whatwg.org/multipage/server-sent-events.html), each with its ref as the event type and its body as the data. Events arrive in the order they happened. A subscriber that falls 64 events behind loses its subscription: it should subscribe again, then catch up by calling capabilities.
 
+An event is for everyone unless the module says who it's for: `node.emit` takes `to`, the DIDs of the people it concerns, such as a channel's members. Only streams of people signed in as one of them carry it ("Signing in"); a stream nobody signed in to carries only events for everyone.
+
 ## Signing in
 
 People use a node through local tools, such as the web app, which sign them in to the node's local API so capabilities know who they're for. A person is their DID, and acts from a device whose key their root authorized ([identity.md](identity.md), "Devices"):

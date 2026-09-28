@@ -23,6 +23,9 @@ export interface Env {
   // emit tells the node's subscribers, such as its users' apps, of the
   // module's event called name, which its manifest declares.
   emit(name: string, body?: object): Promise<void>
+  // emitTo is emit for the people named, by DID: only their subscribers get
+  // the event.
+  emitTo(name: string, body: object, to: string[]): Promise<void>
   // sign signs data with the node's key, for a purpose starting with the
   // module's name.
   sign(purpose: string, data: Uint8Array): Promise<Uint8Array>
@@ -105,6 +108,9 @@ export function serve(start: (config: any, env: Env) => Module | Promise<Module>
     notifyNode: (id, ref, input = {}) => send({ method: ref, params: { ...input, _meta: { to: id } } }),
     emit: async (name, body = {}) => {
       await call('node.emit', { name, body })
+    },
+    emitTo: async (name, body, to) => {
+      await call('node.emit', { name, body, to })
     },
     sign: async (purpose, data) => {
       const out = await call('node.sign', { purpose, data: Buffer.from(data).toString('base64') })

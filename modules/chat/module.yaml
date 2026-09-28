@@ -130,10 +130,10 @@ capabilities:
         online: {type: boolean, description: For presence.}
 events:
   - name: posted
-    description: "An event was added to a channel on this node: from a person here, or pushed by another node."
+    description: "An event was added to a channel on this node: from a person here, or pushed by another node. For the channel's members."
     schema: {$ref: "#/$defs/event"}
   - name: typing
-    description: A person is typing in a channel, here or on another member's node.
+    description: A person is typing in a channel, here or on another member's node. For the channel's members.
     schema:
       type: object
       required: [channel, user]
@@ -141,7 +141,7 @@ events:
         channel: {$ref: "#/$defs/id"}
         user: {$ref: "#/$defs/did"}
   - name: presence
-    description: A person went online or offline.
+    description: A person went online or offline. For the people who share a channel with them.
     schema:
       type: object
       required: [user, online]

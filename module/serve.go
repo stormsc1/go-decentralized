@@ -126,6 +126,13 @@ func (s *server) start(input json.RawMessage) (json.RawMessage, error) {
 			}
 			return s.call(ctx, Call{Ref: "node.emit"}, map[string]any{"name": name, "body": data}, nil)
 		},
+		EmitTo: func(ctx context.Context, name string, body any, to []string) error {
+			data, err := Encode(body)
+			if err != nil {
+				return err
+			}
+			return s.call(ctx, Call{Ref: "node.emit"}, map[string]any{"name": name, "body": data, "to": to}, nil)
+		},
 		Sign: func(ctx context.Context, purpose string, data []byte) ([]byte, error) {
 			var out struct {
 				Signature []byte `json:"signature"`

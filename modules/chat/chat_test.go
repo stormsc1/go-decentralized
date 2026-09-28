@@ -251,6 +251,15 @@ func TestChat(t *testing.T) {
 	}
 	count(1)
 
+	// Events are for the channel's members: Bob's app gets them, Carol's
+	// and one nobody signed in to don't.
+	bobs, _ := c.n.SubscribeAs(bob.id, "chat.posted")
+	defer bobs.Close()
+	carols, _ := c.n.SubscribeAs(carol.id, "chat.posted")
+	defer carols.Close()
+	nobodys, _ := c.n.SubscribeAs("", "chat.posted")
+	defer nobodys.Close()
+
 	// Messages chain: each names the heads as parents and becomes the head.
 	m1, err := c.submit(alice.event(t, ch.ID, ch.Heads, "message", map[string]string{"text": "hello"}))
 	if err != nil {
@@ -264,6 +273,23 @@ func TestChat(t *testing.T) {
 		t.Fatalf("heads = %v, want the last message", ch.Heads)
 	}
 	count(2)
+	for _, want := range []string{m1.ID, m2.ID} {
+		select {
+		case e := <-bobs.Events():
+			if !strings.Contains(string(e.Body), want) {
+				t.Fatalf("bob got %s, want %.8s", e.Body, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("bob, a member, got no posted event")
+		}
+	}
+	select {
+	case e := <-carols.Events():
+		t.Fatalf("carol, not a member, got %s", e.Body)
+	case e := <-nobodys.Events():
+		t.Fatalf("a stream nobody signed in to got %s", e.Body)
+	default:
+	}
 
 	// Nobody can post as someone else, tamper, post from outside, edit
 	// another's message, or read a channel they aren't in.

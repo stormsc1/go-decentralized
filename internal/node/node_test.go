@@ -108,6 +108,13 @@ func (e echo) Handlers() map[string]module.Handler {
 			if err != nil {
 				return nil, err
 			}
+			if to, ok := in["to"].([]any); ok {
+				var people []string
+				for _, p := range to {
+					people = append(people, p.(string))
+				}
+				return map[string]int64{"version": version}, e.env.EmitTo(ctx, "noted", map[string]any{"text": in["text"]}, people)
+			}
 			return map[string]int64{"version": version}, e.env.Emit(ctx, "noted", map[string]any{"text": in["text"]})
 		}),
 		"notes": module.HandlerFor(func(ctx context.Context, _ struct{}) (map[string]any, error) {
@@ -305,6 +312,33 @@ func TestEvents(t *testing.T) {
 	}
 	res.Body.Close()
 
+	// Events for particular people reach them, and the node's own tools;
+	// events for everyone reach everyone.
+	alices, _ := n.SubscribeAs("did:key:alice", "echo.noted")
+	defer alices.Close()
+	bobs, _ := n.SubscribeAs("did:key:bob", "echo.noted")
+	defer bobs.Close()
+	nobodys, _ := n.SubscribeAs("", "echo.noted")
+	defer nobodys.Close()
+	all, _ := n.Subscribe("echo.noted")
+	defer all.Close()
+	if _, err := n.Call(ctx, "echo.note", json.RawMessage(`{"id":"b","text":"for alice","time":2,"to":["did:key:alice"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.Call(ctx, "echo.note", json.RawMessage(`{"id":"c","text":"for everyone","time":3}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []Event{next(t, alices), next(t, all)} {
+		if string(e.Body) != `{"text":"for alice"}` || len(e.To) != 1 {
+			t.Fatalf("alice's event = %+v", e)
+		}
+	}
+	for _, s := range []*Subscription{alices, bobs, nobodys, all} {
+		if e := next(t, s); string(e.Body) != `{"text":"for everyone"}` {
+			t.Fatalf("everyone's event = %+v", e)
+		}
+	}
+
 	sub, err := n.Subscribe("echo.noted")
 	if err != nil {
 		t.Fatal(err)
@@ -446,10 +480,22 @@ func TestSignIn(t *testing.T) {
 		t.Fatalf("login = %s %s", res.Status, out)
 	}
 
-	// Signed in: calls are for the person, the root, not the device.
+	// Signed in: calls are for the person, the root, not the device, and
+	// the event stream carries what's for them.
 	if _, out := call("echo.whoami", nil); !strings.Contains(string(out), `"user":"`+root+`"`) {
 		t.Fatalf("whoami with a session = %s", out)
 	}
+	stream, err := client.Get(api.URL + "/v1/events?ref=echo.noted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call("echo.note", map[string]any{"id": "x", "text": "not yours", "time": 1, "to": []string{device}})
+	call("echo.note", map[string]any{"id": "y", "text": "yours", "time": 2, "to": []string{root}})
+	line := make([]byte, len("event: echo.noted\ndata: {\"text\":\"yours\"}\n\n"))
+	if _, err := io.ReadFull(stream.Body, line); err != nil || string(line) != "event: echo.noted\ndata: {\"text\":\"yours\"}\n\n" {
+		t.Fatalf("the person's stream = %q, %v", line, err)
+	}
+	stream.Body.Close()
 	if res, out := post("/v1/logout", nil); res.StatusCode != http.StatusNoContent {
 		t.Fatalf("logout = %s %s", res.Status, out)
 	}

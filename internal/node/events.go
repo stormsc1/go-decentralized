@@ -13,6 +13,8 @@ type Event struct {
 	// Ref names the event: "<module>.<event>".
 	Ref  string          `json:"ref"`
 	Body json.RawMessage `json:"body"`
+	// To is who the event is for, as DIDs: everyone if empty.
+	To []string `json:"to,omitempty"`
 }
 
 // behind is how many events a subscriber may fall behind by before the node
@@ -23,6 +25,8 @@ const behind = 64
 type Subscription struct {
 	n      *Node
 	refs   []string
+	person string // who the subscriber is, or "" for nobody
+	all    bool   // sees events for anyone
 	events chan Event
 }
 
@@ -36,8 +40,19 @@ func (s *Subscription) Events() <-chan Event { return s.events }
 func (s *Subscription) Close() { s.n.unsubscribe(s) }
 
 // Subscribe subscribes to the events refs name, e.g. "chat.message", for
-// local tools such as apps.
+// the node's own tools, which see events for anyone.
 func (n *Node) Subscribe(refs ...string) (*Subscription, error) {
+	return n.subscribe(refs, "", true)
+}
+
+// SubscribeAs subscribes to events like Subscribe, for the person with the
+// given DID: they get the events for everyone, and those for them. With no
+// person, only the events for everyone.
+func (n *Node) SubscribeAs(person string, refs ...string) (*Subscription, error) {
+	return n.subscribe(refs, person, false)
+}
+
+func (n *Node) subscribe(refs []string, person string, all bool) (*Subscription, error) {
 	if len(refs) == 0 {
 		return nil, module.Errorf(module.CodeInvalidArgument, "no events to subscribe to")
 	}
@@ -49,7 +64,7 @@ func (n *Node) Subscribe(refs ...string) (*Subscription, error) {
 		}
 	}
 	n.mu.RUnlock()
-	s := &Subscription{n: n, refs: refs, events: make(chan Event, behind)}
+	s := &Subscription{n: n, refs: refs, person: person, all: all, events: make(chan Event, behind)}
 	n.smu.Lock()
 	n.subs[s] = struct{}{}
 	n.smu.Unlock()
@@ -65,9 +80,18 @@ func (n *Node) unsubscribe(s *Subscription) {
 	}
 }
 
+// wants reports whether the subscription gets e.
+func (s *Subscription) wants(e Event) bool {
+	if !slices.Contains(s.refs, e.Ref) {
+		return false
+	}
+	return len(e.To) == 0 || s.all || (s.person != "" && slices.Contains(e.To, s.person))
+}
+
 // emit tells the subscribers of a module's event called name, once body
-// matches the event's schema.
-func (n *Node) emit(from, name string, body json.RawMessage) error {
+// matches the event's schema: those subscribed for the people in to, or
+// everyone if to is empty.
+func (n *Node) emit(from, name string, body json.RawMessage, to []string) error {
 	ref := from + "." + name
 	n.mu.RLock()
 	schema := n.events[ref]
@@ -86,11 +110,11 @@ func (n *Node) emit(from, name string, body json.RawMessage) error {
 	if err := json.Compact(&compact, body); err != nil {
 		return module.Errorf(module.CodeInvalidArgument, "%s: %v", ref, err)
 	}
-	e := Event{Ref: ref, Body: compact.Bytes()}
+	e := Event{Ref: ref, Body: compact.Bytes(), To: to}
 	n.smu.Lock()
 	defer n.smu.Unlock()
 	for s := range n.subs {
-		if !slices.Contains(s.refs, ref) {
+		if !s.wants(e) {
 			continue
 		}
 		select {

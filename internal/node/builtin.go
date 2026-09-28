@@ -40,6 +40,7 @@ func (n *Node) signFor(ctx context.Context, in signInput) (signOutput, error) {
 type emitInput struct {
 	Name string          `json:"name"`
 	Body json.RawMessage `json:"body"`
+	To   []string        `json:"to"`
 }
 
 // emitFor emits the calling module's event.
@@ -48,7 +49,7 @@ func (n *Node) emitFor(ctx context.Context, in emitInput) (struct{}, error) {
 	if m == "" {
 		return struct{}{}, module.Errorf(module.CodePermissionDenied, "only modules have events")
 	}
-	return struct{}{}, n.emit(m, in.Name, in.Body)
+	return struct{}{}, n.emit(m, in.Name, in.Body, in.To)
 }
 
 type tracesInput struct {

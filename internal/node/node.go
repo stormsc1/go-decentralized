@@ -352,7 +352,14 @@ func (n *Node) env(name string) module.Env {
 			if err != nil {
 				return err
 			}
-			return n.emit(name, event, data)
+			return n.emit(name, event, data, nil)
+		},
+		EmitTo: func(_ context.Context, event string, body any, to []string) error {
+			data, err := module.Encode(body)
+			if err != nil {
+				return err
+			}
+			return n.emit(name, event, data, to)
 		},
 		Sign: func(_ context.Context, purpose string, data []byte) ([]byte, error) {
 			return n.sign(name, purpose, data)

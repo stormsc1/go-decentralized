@@ -28,6 +28,7 @@ capabilities:
       properties:
         name: {type: string}
         body: {type: object, description: "Checked against the event's schema."}
+        to: {type: array, items: {type: string}, description: "Who the event is for, as DIDs; everyone if absent."}
   - name: traces
     description: Lists the calls this node made after since, oldest first.
     internal: true

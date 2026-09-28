@@ -313,6 +313,17 @@ func in(ch Channel, user string) bool {
 	return slices.ContainsFunc(ch.Members, func(ms Membership) bool { return ms.User == user })
 }
 
+// people returns the members' DIDs.
+func people(members []Membership) []string {
+	var out []string
+	for _, ms := range members {
+		if !slices.Contains(out, ms.User) {
+			out = append(out, ms.User)
+		}
+	}
+	return out
+}
+
 // nodes returns the nodes with a copy of ch: its members' nodes.
 func nodes(ch Channel) []string {
 	var out []string
@@ -372,7 +383,7 @@ func (m *Module) apply(ctx context.Context, s did.Signed, from string) (Event, b
 		if err := m.create(ctx, e, from); err != nil {
 			return Event{}, false, err
 		}
-		return e, true, m.env.Emit(ctx, "posted", e)
+		return e, true, m.posted(ctx, e)
 	}
 	ch, version, err := m.channel(ctx, ev.Channel)
 	if err != nil {
@@ -426,7 +437,17 @@ func (m *Module) apply(ctx context.Context, s did.Signed, from string) (Event, b
 	if err != nil {
 		return Event{}, false, err
 	}
-	return e, true, m.env.Emit(ctx, "posted", e)
+	return e, true, m.posted(ctx, e)
+}
+
+// posted tells the apps of the channel's members here of an event added to
+// it: the members as they are now, so an invite reaches the invited.
+func (m *Module) posted(ctx context.Context, e Event) error {
+	members, err := m.memberships(ctx, e.Channel)
+	if err != nil {
+		return err
+	}
+	return m.env.EmitTo(ctx, "posted", e, people(members))
 }
 
 // create stores a channel from its create event: the channel, its first
@@ -932,7 +953,7 @@ func (m *Module) typing(ctx context.Context, req struct {
 		return struct{}{}, module.Errorf(module.CodePermissionDenied, "%s isn't in channel %.8s", user, req.Channel)
 	}
 	m.tell(ctx, m.others(ch), notice{Kind: "typing", User: user, Channel: req.Channel})
-	return struct{}{}, m.env.Emit(ctx, "typing", map[string]string{"user": user, "channel": req.Channel})
+	return struct{}{}, m.env.EmitTo(ctx, "typing", map[string]string{"user": user, "channel": req.Channel}, people(ch.Members))
 }
 
 // heartbeat is from the client of the person signed in: they're online until
@@ -956,33 +977,38 @@ func (m *Module) heartbeat(ctx context.Context, _ struct{}) (struct{}, error) {
 	return struct{}{}, m.announce(ctx, user, true)
 }
 
-// announce tells this node's clients and the other members' nodes that a
-// person here went online or offline.
+// announce tells the apps of the people who share a channel with a person
+// here, and the other members' nodes, that they went online or offline.
 func (m *Module) announce(ctx context.Context, user string, online bool) error {
 	n := notice{Kind: "presence", User: user, Online: online}
-	nodes, err := m.nodesWith(ctx, user)
+	nodes, people, err := m.sharing(ctx, user)
 	if err != nil {
 		return err
 	}
 	m.tell(ctx, nodes, n)
-	return m.env.Emit(ctx, "presence", map[string]any{"user": user, "online": online})
+	return m.env.EmitTo(ctx, "presence", map[string]any{"user": user, "online": online}, people)
 }
 
-// nodesWith returns the nodes that share a channel with the person id.
-func (m *Module) nodesWith(ctx context.Context, id string) ([]string, error) {
+// sharing returns the nodes and the people that share a channel with the
+// person id, the person among them.
+func (m *Module) sharing(ctx context.Context, id string) (withNodes, withPeople []string, err error) {
 	channels, err := m.channelsOf(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var all []string
 	for _, ch := range channels {
 		for _, node := range nodes(ch) {
-			if !slices.Contains(all, node) {
-				all = append(all, node)
+			if !slices.Contains(withNodes, node) {
+				withNodes = append(withNodes, node)
+			}
+		}
+		for _, p := range people(ch.Members) {
+			if !slices.Contains(withPeople, p) {
+				withPeople = append(withPeople, p)
 			}
 		}
 	}
-	return all, nil
+	return withNodes, withPeople, nil
 }
 
 // sweep lets people go offline whose heartbeats stopped.
@@ -1000,8 +1026,8 @@ func (m *Module) sweep(ctx context.Context) {
 		var u User
 		if _, err := m.env.Entities("user").Get(ctx, user, &u); err == nil && u.Node == m.env.NodeID {
 			_ = m.announce(ctx, user, false)
-		} else {
-			_ = m.env.Emit(ctx, "presence", map[string]any{"user": user, "online": false})
+		} else if _, people, err := m.sharing(ctx, user); err == nil {
+			_ = m.env.EmitTo(ctx, "presence", map[string]any{"user": user, "online": false}, people)
 		}
 	}
 }
@@ -1038,9 +1064,9 @@ func (m *Module) notice(ctx context.Context, n notice) (struct{}, error) {
 		if !slices.Contains(nodes(ch), from) || !in(ch, n.User) {
 			return struct{}{}, module.Errorf(module.CodePermissionDenied, "not a member")
 		}
-		return struct{}{}, m.env.Emit(ctx, "typing", map[string]string{"user": n.User, "channel": n.Channel})
+		return struct{}{}, m.env.EmitTo(ctx, "typing", map[string]string{"user": n.User, "channel": n.Channel}, people(ch.Members))
 	case "presence":
-		shared, err := m.nodesWith(ctx, n.User)
+		shared, people, err := m.sharing(ctx, n.User)
 		if err != nil {
 			return struct{}{}, err
 		}
@@ -1054,7 +1080,7 @@ func (m *Module) notice(ctx context.Context, n notice) (struct{}, error) {
 			delete(m.online, n.User)
 		}
 		m.mu.Unlock()
-		return struct{}{}, m.env.Emit(ctx, "presence", map[string]any{"user": n.User, "online": n.Online})
+		return struct{}{}, m.env.EmitTo(ctx, "presence", map[string]any{"user": n.User, "online": n.Online}, people)
 	}
 	return struct{}{}, module.Errorf(module.CodeInvalidArgument, "unknown notice %q", n.Kind)
 }

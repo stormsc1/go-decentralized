@@ -71,6 +71,9 @@ type Env struct {
 	// Emit tells the node's subscribers, such as its users' apps, of the
 	// module's event called name, which its manifest declares.
 	Emit func(ctx context.Context, name string, body any) error
+	// EmitTo is Emit for the people named, by DID: only their subscribers
+	// get the event, and the node's own tools.
+	EmitTo func(ctx context.Context, name string, body any, to []string) error
 	// DataDir is the node's data directory, for files the module keeps of
 	// its own; empty if the node keeps nothing on disk.
 	DataDir string
