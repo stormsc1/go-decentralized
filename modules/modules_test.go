@@ -94,6 +94,8 @@ modules:
     config: {greeting: Hi}
   - name: chat
     stores: {data: main}
+  - name: vault
+    stores: {data: main}
 `), &cfg)
 	if err != nil {
 		t.Fatal(err)

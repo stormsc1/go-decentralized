@@ -1,0 +1,62 @@
+# yaml-language-server: $schema=../../spec/module.schema.json
+name: vault
+version: 0.1.0
+description: "Keeps people's root identities for those without a vault of their own, wrapped so the vault can't read them: a blob per account, opened with a proof only the person can derive, from a passkey or a passphrase. The vault signs nothing. See docs/design/identity-auth.md."
+capabilities:
+  - name: save
+    description: "Creates an account, or replaces its blob. The account is named by the hash of the proof, so only whoever derives the proof reaches it; the request is signed by the root itself (purpose vault.save), and only that root may replace the blob later."
+    input:
+      type: object
+      required: [signed]
+      properties:
+        signed:
+          allOf: [{$ref: "#/$defs/signed"}]
+          description: "Over {proof, blob}: the proof, and the wrapped root as the client keeps it, up to 8 KiB."
+    output:
+      type: object
+      properties:
+        id: {type: string}
+        root: {$ref: "#/$defs/did"}
+        version: {type: integer}
+  - name: open
+    description: Returns an account's blob to whoever proves the account.
+    input:
+      type: object
+      required: [proof]
+      properties:
+        proof: {$ref: "#/$defs/proof"}
+    output:
+      type: object
+      properties:
+        id: {type: string}
+        root: {$ref: "#/$defs/did"}
+        blob: {type: object}
+        version: {type: integer}
+stores:
+  - name: data
+    type: entity
+    entities:
+      - name: account
+        schema:
+          type: object
+          required: [root, blob, created]
+          properties:
+            root: {$ref: "#/$defs/did"}
+            blob: {type: object}
+            created: {type: string, format: date-time}
+            updated: {type: string, format: date-time}
+$defs:
+  did:
+    type: string
+    pattern: "^did:key:z[1-9A-HJ-NP-Za-km-z]+$"
+  proof:
+    type: string
+    contentEncoding: base64
+    description: "At least 16 random bytes only the person can derive; 32 from a passkey's PRF."
+  signed:
+    type: object
+    required: [data, signer, sig]
+    properties:
+      data: {type: string, contentEncoding: base64, description: What was signed, as it was.}
+      signer: {$ref: "#/$defs/did"}
+      sig: {type: string, contentEncoding: base64}

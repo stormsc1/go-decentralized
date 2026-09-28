@@ -19,6 +19,10 @@ modules:
   # The chat, for the chat web app (web/chat.html).
   - name: chat
     stores: {data: main}
+  # Keeps people's root identities, wrapped so it can't read them, for those
+  # without a vault of their own.
+  - name: vault
+    stores: {data: main}
   # An example module: compiled into the node, or in a process of its own if
   # GREETER_RUN names the command.
   - name: greeter
