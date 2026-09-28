@@ -67,7 +67,7 @@ A call names a capability by its ref and carries an input. It ends with a result
 2. fails it with `permission_denied` if the caller is another node and the capability is local;
 3. fails it with `invalid_argument` if the input doesn't match the capability's input schema. An empty input is `{}`.
 
-The module learns who called: the ID the calling node proved in its session's handshake, or its own node's ID for local calls.
+The module learns who called: the ID the calling node proved in its session's handshake, or its own node's ID for local calls. For a call a local tool makes for a person signed in to the node (see "Signing in"), it also learns the person's DID: `module.User` in Go, `_meta.user` for process modules.
 
 ## What nodes give modules
 
@@ -88,6 +88,16 @@ Nodes have capabilities of their own, for their modules and tools. Schemas: `int
 Modules tell subscribers what happens, such as a message arriving, with the events their manifest declares. The node checks each event's body against its schema, and fails `node.emit` with `invalid_argument` if it doesn't match.
 
 Subscribers are local tools, such as apps, on the local API: `GET /v1/events?ref=<module>.<event>&ref=...` streams the events named as [server-sent events](https://html.spec.whatwg.org/multipage/server-sent-events.html), each with its ref as the event type and its body as the data. Events arrive in the order they happened. A subscriber that falls 64 events behind loses its subscription: it should subscribe again, then catch up by calling capabilities.
+
+## Signing in
+
+People use a node through local tools, such as the web app, which sign them in to the node's local API so capabilities know who they're for. A person is their DID, and acts from a device whose key their root authorized ([identity.md](identity.md), "Devices"):
+
+1. `GET /v1/challenge` answers `{challenge, node}`: random bytes, good for 5 minutes and one try, and the node's ID.
+2. `POST /v1/login` with `{signed}`: the device's signature, for the purpose `node.login`, of `{challenge, node}`, carrying the root's delegation. The node verifies it, answers `{person, device, expires}` and sets a session cookie, good for a day.
+3. Calls and event streams with the cookie are for the person; `GET /v1/session` says who that is, and `POST /v1/logout` ends it.
+
+Capabilities decide what a person may do: the chat, for instance, lists and reads only the channels the person signed in is in, and takes their heartbeats. Writes are still signed by the person's device, so a session alone can't act as them where it matters.
 
 ## Storage
 
@@ -148,7 +158,7 @@ modules:
 - The node starts the command with the environment variable `DECENTRALIZED_PROTOCOL=1`, the version of this protocol. A module MUST exit if it doesn't speak that version.
 - Messages ([wire.md](wire.md), JSON-RPC 2.0) travel over the process's stdin, from the node, and stdout, from the module, one per line, as in MCP's stdio transport. Nothing else may be written to stdout. stderr is the module's log, which the node keeps.
 - Both sides make calls and pick the `id`s of their own. Calls run concurrently, and end in any order. Either side can cancel its own call.
-- On calls the node sends, `_meta.from` is the ID of the node that made the call.
+- On calls the node sends, `_meta.from` is the ID of the node that made the call, and `_meta.user` the DID of the person the call is for, if a local tool made it for someone signed in.
 - On calls the module sends, `_meta.to`, a node ID, asks the node to call that node. Without it, the call is to the node's own capabilities. A call without an `id` goes on as one, and the node doesn't answer it.
 
 The node's first call is `module.start`, with input `{node: {id, name, data_dir}, config}`, where `config` is the module's block from the node definition (see "Configuration"). It returns `{manifest}`, and from then on the node serves the module's capabilities. The node may also call `module.inspect`, which returns the module's state for debugging, or `{}`.

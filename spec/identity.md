@@ -30,8 +30,8 @@ Data an identity signs travels as:
 
 A person's root key signs for their devices, which sign with keys of their own. A device isn't necessarily a node.
 
-- A delegation is signed data, for the purpose `did.delegation`, whose data is `{"device": "<the device's DID>", "expires": "<time>"}`. The root signs it.
+- A delegation is signed data, for the purpose `did.delegation`, whose data is `{"device": "<the device's DID>", "expires": "<time>", "scope": "<scope>"}`. The root signs it. `scope` is what the device may sign for: a purpose, or a module name covering all its purposes (`chat` covers `chat.event` and `chat.user`); `*`, or none, covers any.
 - Data a device signs for the root carries the delegation in `delegation`, and the device as `signer`.
-- Verifiers check the delegation's signature, that it names the signer, and that it hadn't expired when the data was signed, as far as they know: for instance, when they first received it. The data is then the root's.
+- Verifiers check the delegation's signature, that it names the signer, that it covers the purpose, and that it hadn't expired when the data was signed, as far as they know: for instance, when they first received it. The data is then the root's.
 - Delegations don't nest: devices can't delegate.
 - Delegations can't be revoked yet, so their expiry should be short.

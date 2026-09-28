@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -52,6 +53,9 @@ func main() {
 	}
 
 	c := &CLI{Node: n, Timeout: *timeout}
+	if dir, err := os.UserConfigDir(); err == nil {
+		c.IdentityKey = filepath.Join(dir, "go-decentralized", "identity.key")
+	}
 
 	// A single command can be passed as arguments for scripting:
 	//   clinode routing.list_nodes

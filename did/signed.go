@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"go-decentralized/module"
@@ -38,24 +39,44 @@ func Sign(key ed25519.PrivateKey, purpose string, data []byte) (Signed, error) {
 const DelegationPurpose = "did.delegation"
 
 // Grant is what a delegation says: the device may act for the identity that
-// signed it, until it expires.
+// signed it, for purposes within Scope, until it expires.
 type Grant struct {
 	// Device is the device key's did:key.
 	Device  string    `json:"device"`
 	Expires time.Time `json:"expires"`
+	// Scope is the purposes the device may sign for: a purpose or a module
+	// name, such as "chat" for "chat.event" and "chat.user"; "" or "*" for
+	// any.
+	Scope string `json:"scope,omitempty"`
+}
+
+// Allows reports whether the grant covers signing for purpose.
+func (g Grant) Allows(purpose string) bool {
+	return g.Scope == "" || g.Scope == "*" || purpose == g.Scope || strings.HasPrefix(purpose, g.Scope+".")
 }
 
 // Delegate lets the device key device act for the identity whose key is
-// root, until expires.
-func Delegate(root ed25519.PrivateKey, device string, expires time.Time) (Signed, error) {
+// root, for purposes within scope ("" or "*" for any), until expires.
+func Delegate(root ed25519.PrivateKey, device string, expires time.Time, scope string) (Signed, error) {
 	if _, err := PublicKey(device); err != nil {
 		return Signed{}, err
 	}
-	data, err := json.Marshal(Grant{Device: device, Expires: expires.UTC()})
+	data, err := json.Marshal(Grant{Device: device, Expires: expires.UTC(), Scope: scope})
 	if err != nil {
 		return Signed{}, err
 	}
 	return Sign(root, DelegationPurpose, data)
+}
+
+// Grant returns what a signature's delegation grants, if it has one; it
+// isn't verified.
+func (s Signed) Grant() (Grant, bool) {
+	if s.Delegation == nil {
+		return Grant{}, false
+	}
+	var g Grant
+	err := json.Unmarshal(s.Delegation.Data, &g)
+	return g, err == nil
 }
 
 // SignAs signs data for purpose with a device's key, for the identity that
@@ -96,6 +117,9 @@ func (s Signed) Verify(purpose string, at time.Time) (string, error) {
 	}
 	if !at.Before(g.Expires) {
 		return "", fmt.Errorf("%s's delegation to %s expired at %s", d.Signer, s.Signer, g.Expires.Format(time.RFC3339))
+	}
+	if !g.Allows(purpose) {
+		return "", fmt.Errorf("%s's delegation to %s doesn't cover %s", d.Signer, s.Signer, purpose)
 	}
 	return d.Signer, nil
 }

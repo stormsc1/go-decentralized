@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,14 +17,61 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"go-decentralized/did"
+	"go-decentralized/internal/identity"
 	"go-decentralized/internal/node"
 	"go-decentralized/module"
 )
 
-// CLI is the interactive terminal that calls the CLI node's capabilities.
+// CLI is the interactive terminal that calls the CLI node's capabilities. It
+// also holds a root identity, in the key file IdentityKey, with which it
+// authorizes devices such as a browser to act for the person, see
+// docs/design/identity-auth.md.
 type CLI struct {
-	Node    *node.Node
-	Timeout time.Duration
+	Node        *node.Node
+	Timeout     time.Duration
+	IdentityKey string
+}
+
+// identity handles "identity" and "identity authorize <device did> [scope]
+// [duration]".
+func (c *CLI) identity(args []string) bool {
+	if c.IdentityKey == "" {
+		fmt.Println("error: no identity key file")
+		return false
+	}
+	key, err := identity.Load(c.IdentityKey)
+	if err != nil {
+		fmt.Println("error:", err)
+		return false
+	}
+	root := did.Key(key.Public().(ed25519.PublicKey))
+	if len(args) == 0 {
+		fmt.Println(root)
+		return true
+	}
+	if args[0] != "authorize" || len(args) < 2 {
+		fmt.Println("usage: identity | identity authorize <device did> [scope] [duration]")
+		return false
+	}
+	scope, ttl := "*", 30*24*time.Hour
+	if len(args) > 2 {
+		scope = args[2]
+	}
+	if len(args) > 3 {
+		if ttl, err = time.ParseDuration(args[3]); err != nil {
+			fmt.Println("error:", err)
+			return false
+		}
+	}
+	authorization, err := did.Delegate(key, args[1], time.Now().Add(ttl), scope)
+	if err != nil {
+		fmt.Println("error:", err)
+		return false
+	}
+	out, _ := json.Marshal(authorization)
+	fmt.Println(string(out))
+	return true
 }
 
 // REPL reads commands from in until EOF or "exit".
@@ -54,6 +102,9 @@ func (c *CLI) REPL(in io.Reader) {
 // {json}", on the CLI node.
 func (c *CLI) Run(line string) bool {
 	ref, args, _ := strings.Cut(strings.TrimSpace(line), " ")
+	if ref == "identity" {
+		return c.identity(strings.Fields(args))
+	}
 	input, err := c.input(ref, strings.TrimSpace(args))
 	if err != nil {
 		fmt.Println("error:", err)
@@ -248,6 +299,8 @@ func (c *CLI) printHelp() {
 	}
 	tw.Flush()
 	fmt.Println()
+	fmt.Println("  identity\tshow this CLI's root identity, a DID, making it if there is none")
+	fmt.Println("  identity authorize <device did> [scope] [duration]\tauthorize a device (e.g. a browser) to act for it; paste the output there")
 	fmt.Println("  help\tshow this help")
 	fmt.Println("  exit\tquit")
 }

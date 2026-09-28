@@ -82,7 +82,7 @@ func TestSigned(t *testing.T) {
 	}
 
 	// Carried as JSON, and verified as is.
-	delegation, err := Delegate(rootKey, device, now.Add(time.Hour))
+	delegation, err := Delegate(rootKey, device, now.Add(time.Hour), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,10 +113,26 @@ func TestSigned(t *testing.T) {
 	if _, err := misused.Verify("chat.event", now); err == nil {
 		t.Fatal("verified a delegation signed for another purpose")
 	}
-	onward, _ := Delegate(deviceKey, Key(otherKey.Public().(ed25519.PublicKey)), now.Add(time.Hour))
+	onward, _ := Delegate(deviceKey, Key(otherKey.Public().(ed25519.PublicKey)), now.Add(time.Hour), "")
 	onward.Delegation = &delegation
 	nested, _ := SignAs(otherKey, onward, "chat.event", []byte(`{}`))
 	if _, err := nested.Verify("chat.event", now); err == nil {
 		t.Fatal("verified a device's delegation")
+	}
+
+	// A delegation may be scoped to a module's purposes.
+	scoped, _ := Delegate(rootKey, device, now.Add(time.Hour), "chat")
+	for purpose, ok := range map[string]bool{"chat.event": true, "chat": true, "chatter.x": false, "node.login": false} {
+		s, _ := SignAs(deviceKey, scoped, purpose, []byte(`{}`))
+		if _, err := s.Verify(purpose, now); (err == nil) != ok {
+			t.Errorf("scope chat, purpose %s: err = %v", purpose, err)
+		}
+	}
+	if g, ok := scoped.Grant(); ok || g.Scope != "" {
+		// scoped is the delegation itself, which delegates nothing further.
+		t.Fatalf("Grant of a delegation = %+v, %v", g, ok)
+	}
+	if g, ok := s.Grant(); !ok || g.Device != device || g.Scope != "" {
+		t.Fatalf("Grant = %+v, %v", g, ok)
 	}
 }

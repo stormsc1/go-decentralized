@@ -35,6 +35,9 @@ export interface Env {
 export interface Call {
   // caller is the ID of the node that made the call.
   caller: string
+  // user is the DID of the person the call is for, when someone signed in
+  // to the node's local API made it; empty for other nodes and modules.
+  user: string
   // signal aborts when the caller cancels, or gives up.
   signal: AbortSignal
 }
@@ -64,6 +67,7 @@ interface Meta {
   timeout?: number
   from?: string
   to?: string
+  user?: string
 }
 
 // rpcCodes are the JSON-RPC codes of the error codes that have one.
@@ -119,7 +123,7 @@ export function serve(start: (config: any, env: Env) => Module | Promise<Module>
     const prefix = module ? module.manifest.name + '.' : '\0'
     const handler = method.startsWith(prefix) ? module?.handlers[method.slice(prefix.length)] : undefined
     if (!handler) throw new ModuleError('unimplemented', `no capability ${method}`)
-    return handler(input, { caller: meta.from ?? '', signal })
+    return handler(input, { caller: meta.from ?? '', user: meta.user ?? '', signal })
   }
 
   const receive = (m: any) => {

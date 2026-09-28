@@ -26,12 +26,13 @@ import (
 // local tool, goes through one dispatcher, which checks who may call what
 // and validates inputs against the modules' schemas.
 type Node struct {
-	Config  Config
-	ID      string
-	Network *network.Network
-	routing *routing.Routing
-	stores  map[string]store.Store // the node's stores, by name, see Config.Stores
-	key     ed25519.PrivateKey
+	Config   Config
+	ID       string
+	Network  *network.Network
+	routing  *routing.Routing
+	stores   map[string]store.Store // the node's stores, by name, see Config.Stores
+	sessions *sessions              // people signed in to the local API
+	key      ed25519.PrivateKey
 
 	// Process modules may call while later modules load.
 	mu       sync.RWMutex
@@ -78,10 +79,12 @@ var nodeManifest []byte
 // ones from factories, and process ones by running their command. Calls
 // from other nodes arrive through nw.
 func New(cfg Config, key ed25519.PrivateKey, nw *network.Network, factories map[string]module.Factory) (_ *Node, err error) {
+	id := module.NodeID(key.Public().(ed25519.PublicKey))
 	n := &Node{
 		Config:   cfg,
-		ID:       module.NodeID(key.Public().(ed25519.PublicKey)),
+		ID:       id,
 		Network:  nw,
+		sessions: newSessions(id),
 		key:      key,
 		caps:     map[string]*capability{},
 		events:   map[string]*jsonschema.Schema{},

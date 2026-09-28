@@ -145,7 +145,7 @@ func (p *process) handlers() map[string]handler {
 	for _, c := range p.manifest.Capabilities {
 		ref := p.name + "." + c.Name
 		hs[c.Name] = func(ctx context.Context, body json.RawMessage) (json.RawMessage, error) {
-			return p.call(ctx, module.Call{Ref: ref, Input: body, From: module.Caller(ctx)})
+			return p.call(ctx, module.Call{Ref: ref, Input: body, From: module.Caller(ctx), User: module.User(ctx)})
 		}
 	}
 	return hs

@@ -76,7 +76,11 @@ func (s *server) handle(ctx context.Context, call Call) (json.RawMessage, error)
 	if h == nil {
 		return nil, Errorf(CodeUnimplemented, "no capability %s", call.Ref)
 	}
-	out, err := h(WithCaller(ctx, call.From), func(v any) error { return Decode(call.Input, v) })
+	ctx = WithCaller(ctx, call.From)
+	if call.User != "" {
+		ctx = WithUser(ctx, call.User)
+	}
+	out, err := h(ctx, func(v any) error { return Decode(call.Input, v) })
 	if err != nil {
 		return nil, err
 	}

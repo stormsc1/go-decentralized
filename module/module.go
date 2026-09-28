@@ -81,11 +81,13 @@ type Env struct {
 
 type (
 	callerKey   struct{}
+	userKey     struct{}
 	untracedKey struct{}
 )
 
 // Caller returns the ID of the node that made the call being handled: the
-// ID it proved over TLS if it came from another node, or this node's own.
+// ID it proved in its session's handshake if it came from another node, or
+// this node's own.
 func Caller(ctx context.Context) string {
 	id, _ := ctx.Value(callerKey{}).(string)
 	return id
@@ -94,6 +96,19 @@ func Caller(ctx context.Context) string {
 // WithCaller records who made a call, for Caller. Nodes call it.
 func WithCaller(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, callerKey{}, id)
+}
+
+// User returns the DID of the person the call being handled is for: the one
+// who signed in to the node's local API and made it through a tool such as
+// the web app. It's empty for calls from other nodes and from modules.
+func User(ctx context.Context) string {
+	id, _ := ctx.Value(userKey{}).(string)
+	return id
+}
+
+// WithUser records the person a call is for, for User. Nodes call it.
+func WithUser(ctx context.Context, did string) context.Context {
+	return context.WithValue(ctx, userKey{}, did)
 }
 
 // Untraced marks ctx so that the calls a native module makes with it, and

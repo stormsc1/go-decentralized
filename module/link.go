@@ -45,6 +45,9 @@ type Call struct {
 	// To is the ID of the node a process module's call is for, if not its
 	// own.
 	To string
+	// User is the DID of the person a call is for, as a node tells its
+	// process modules, see module.User.
+	User string
 	// Notify is set on calls whose caller doesn't wait for their end, see
 	// Link.Notify.
 	Notify bool
@@ -56,6 +59,7 @@ type meta struct {
 	Timeout int64  `json:"timeout,omitempty"`
 	From    string `json:"from,omitempty"`
 	To      string `json:"to,omitempty"`
+	User    string `json:"user,omitempty"`
 }
 
 // message is a JSON-RPC 2.0 request, notification or response.
@@ -176,7 +180,7 @@ func (l *Link) serve(ctx context.Context, m message) {
 	} else {
 		ctx, cancel = context.WithCancel(ctx)
 	}
-	call := Call{Ref: m.Method, Input: input, From: meta.From, To: meta.To, Notify: notify}
+	call := Call{Ref: m.Method, Input: input, From: meta.From, To: meta.To, User: meta.User, Notify: notify}
 	if notify {
 		go func() {
 			defer cancel()
@@ -268,7 +272,7 @@ func (l *Link) Notify(ctx context.Context, call Call) error {
 
 // callMeta returns what call carries besides its input.
 func callMeta(ctx context.Context, call Call) meta {
-	m := meta{From: call.From, To: call.To}
+	m := meta{From: call.From, To: call.To, User: call.User}
 	if deadline, ok := ctx.Deadline(); ok {
 		m.Timeout = max(1, time.Until(deadline).Milliseconds())
 	}

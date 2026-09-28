@@ -40,7 +40,7 @@ What a call needs besides its input goes in `params._meta`, which isn't part of 
 | Key | Meaning |
 |---|---|
 | `timeout` | How long the caller waits, in milliseconds. The callee SHOULD give up then. |
-| `from`, `to` | Only between a node and its process modules, see [modules.md](modules.md). |
+| `from`, `to`, `user` | Only between a node and its process modules, see [modules.md](modules.md). |
 
 - Messages are at most 1 MiB, encoded. Large data doesn't travel in messages; a transfer protocol for it is planned.
 - Batches aren't used. Methods starting with `$/` are the protocol's own; receivers ignore those they don't know.

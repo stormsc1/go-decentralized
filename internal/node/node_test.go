@@ -1,11 +1,14 @@
 package node
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -13,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"go-decentralized/did"
 	"go-decentralized/internal/identity"
 	"go-decentralized/internal/network"
 	"go-decentralized/internal/store"
@@ -29,7 +33,7 @@ version: 1.0.0
 capabilities:
   - name: whoami
     access: network
-    output: {type: object, properties: {caller: {type: string}}}
+    output: {type: object, properties: {caller: {type: string}, user: {type: string}}}
   - name: add
     input:
       type: object
@@ -80,7 +84,7 @@ func (echo) Manifest() module.Manifest { return echoManifest }
 func (e echo) Handlers() map[string]module.Handler {
 	return map[string]module.Handler{
 		"whoami": module.HandlerFor(func(ctx context.Context, _ struct{}) (map[string]string, error) {
-			return map[string]string{"caller": module.Caller(ctx)}, nil
+			return map[string]string{"caller": module.Caller(ctx), "user": module.User(ctx)}, nil
 		}),
 		"add": module.HandlerFor(func(_ context.Context, in struct{ A, B int }) (map[string]int, error) {
 			return map[string]int{"sum": in.A + in.B}, nil
@@ -371,6 +375,86 @@ func TestStores(t *testing.T) {
 	var v int
 	if err := n.local("test").Get(ctx, "k", &v); err != nil || v != 1 {
 		t.Fatalf("local Get = %d, %v", v, err)
+	}
+}
+
+// A person signs in to the local API by signing a challenge with a device
+// key their root delegated to; calls then know who they're for.
+func TestSignIn(t *testing.T) {
+	n, _ := start(t, nil, ModuleConfig{Name: "echo"})
+	api := httptest.NewServer(n.Handler())
+	defer api.Close()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	root, rootKey, _ := did.New()
+	device, deviceKey, _ := did.New()
+	authorization, err := did.Delegate(rootKey, device, time.Now().Add(time.Hour), "*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(path string, v any) (*http.Response, []byte) {
+		t.Helper()
+		body, _ := json.Marshal(v)
+		res, err := client.Post(api.URL+path, "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		out, _ := io.ReadAll(res.Body)
+		return res, out
+	}
+	call := func(ref string, in any) (*http.Response, []byte) { return post("/v1/capabilities/"+ref, in) }
+
+	// Not signed in: capabilities run as nobody.
+	if _, out := call("echo.whoami", nil); !strings.Contains(string(out), `"user":""`) {
+		t.Fatalf("whoami without a session = %s", out)
+	}
+	if res, _ := client.Get(api.URL + "/v1/session"); res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("session before signing in: %s", res.Status)
+	}
+
+	// Signing in: a challenge, signed for this node by the device.
+	res, err := client.Get(api.URL + "/v1/challenge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var challenge struct{ Challenge, Node string }
+	if err := json.NewDecoder(res.Body).Decode(&challenge); err != nil || challenge.Node != n.ID {
+		t.Fatalf("challenge = %+v, %v", challenge, err)
+	}
+	sign := func(key ed25519.PrivateKey, purpose string, v any) did.Signed {
+		data, _ := json.Marshal(v)
+		s, err := did.SignAs(key, authorization, purpose, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	claim := map[string]string{"challenge": challenge.Challenge, "node": n.ID}
+	if res, _ := post("/v1/login", map[string]any{"signed": sign(deviceKey, "node.other", claim)}); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("signed in with a signature for something else: %s", res.Status)
+	}
+	// The failed try used the challenge up.
+	if res, _ := post("/v1/login", map[string]any{"signed": sign(deviceKey, LoginPurpose, claim)}); res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("signed in with a used challenge: %s", res.Status)
+	}
+	res, _ = client.Get(api.URL + "/v1/challenge")
+	_ = json.NewDecoder(res.Body).Decode(&challenge)
+	claim["challenge"] = challenge.Challenge
+	res, out := post("/v1/login", map[string]any{"signed": sign(deviceKey, LoginPurpose, claim)})
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(out), root) {
+		t.Fatalf("login = %s %s", res.Status, out)
+	}
+
+	// Signed in: calls are for the person, the root, not the device.
+	if _, out := call("echo.whoami", nil); !strings.Contains(string(out), `"user":"`+root+`"`) {
+		t.Fatalf("whoami with a session = %s", out)
+	}
+	if res, out := post("/v1/logout", nil); res.StatusCode != http.StatusNoContent {
+		t.Fatalf("logout = %s %s", res.Status, out)
+	}
+	if _, out := call("echo.whoami", nil); !strings.Contains(string(out), `"user":""`) {
+		t.Fatalf("whoami after logout = %s", out)
 	}
 }
 
