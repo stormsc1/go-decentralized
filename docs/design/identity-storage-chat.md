@@ -75,11 +75,12 @@ Modules reach the stores through built-in capabilities, like `node.*` and `routi
 - **History:** a new member's node copies a channel's full history from any member's node.
 - **Finding people and channels:** by invites and links only.
 - **Presence and typing:** live events, not stored.
+- **Identity, for now (2026-09-28):** the chat has a user of its own, `{id, name, external}`: `id` is a UUID the web app picks and keeps in the browser, `name` is chosen freely, and `external` is where the person's identity outside the chat, a DID, goes later. Events carry the chat user as author and aren't signed yet. Identity gets looked at again after the chat works on one node.
 
 **Sketch**
-- **An event:** `{channel, author (DID), kind, body, parents, time, sig}`. Its ID is its hash. `kind` is one of: create, invite, join, message, edit, reaction, receipt.
+- **An event:** `{channel, author, kind, body, parents, time}`, and `sig` once events are signed. Its ID is its hash; the create event is hashed without a channel, since its ID becomes the channel's. `kind` is one of: create, invite, join, message, edit, reaction, receipt.
 - **A channel:** its ID is the hash of its create event. A direct message is a channel of two.
-- **Sync:** a member's node pushes new events to the other members' nodes, and fetches any parents it's missing from them.
+- **Sync (built):** a member's node pushes new events to the other members' nodes, retrying a few times, and a node fetches any parents it's missing from the pusher. Nodes also catch up by comparing heads: at start and every minute, a node tells each member node its heads for a channel, fetches the ones it lacks, and gets the other's heads back to do the same, so nodes apart for a while converge on their own. Typing and presence (client heartbeats) cross nodes as notices, never stored.
 - **What the platform needs first:**
   - storage, for events and channels;
   - pushed events on links, for live updates between nodes;
