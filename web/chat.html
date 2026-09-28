@@ -16,6 +16,10 @@
           <button value="create">New here? Create an identity with a passkey</button>
         </div>
         <details>
+          <summary>My identity is in another node's vault</summary>
+          <input id="vault-node" type="text" placeholder="That node's ID" autocomplete="off" />
+        </details>
+        <details>
           <summary>Use a passphrase instead</summary>
           <input id="handle" type="text" placeholder="A handle, e.g. your email" autocomplete="username" />
           <input id="passphrase" type="password" placeholder="A passphrase of 12 characters or more" autocomplete="current-password" />

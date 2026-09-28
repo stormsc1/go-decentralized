@@ -39,10 +39,8 @@ Options: hide everywhere and let each org's retention policy decide what it
 keeps, ask every node to erase (not enforceable), or hide only. See
 docs/design/identity-storage-chat.md.
 
-## One vault per node
-The web app keeps roots in the vault of the node that serves it, so an
-identity made through one node can't sign in through another's app. Fix:
-the app asks which vault (a node ID), and `vault.open` and `vault.save`
-become network capabilities the local node forwards to. Also missing:
-re-wrapping when a passkey changes, recovery when it's lost, and rate
-limits on `vault.open` against guessing passphrases online.
+## The vault's gaps
+Re-wrapping when a passkey changes, recovery when it's lost, and rate
+limits on `vault.open` against guessing passphrases online. A person also
+has to know their vault's node ID to sign in through another node's app;
+finding it from the person, or from the passkey, would be kinder.

@@ -3,7 +3,8 @@
 // passphrase): a key that wraps the root, which never leaves the browser,
 // and a proof, whose hash names the account. The vault keeps the wrapped
 // root and hands it to whoever presents the proof. It can't read what it
-// keeps, and signs nothing. See docs/design/identity-auth.md.
+// keeps, and signs nothing. A person's vault may be on another node: the
+// app names it, and its own node forwards. See docs/design/identity-auth.md.
 package vault
 
 import (
@@ -67,9 +68,23 @@ func accountID(proof []byte) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// forward passes a call on to the vault on node, if that's another node,
+// returning whether it did.
+func (m *Module) forward(ctx context.Context, node, name string, in, out any) (bool, error) {
+	if node == "" || node == m.env.NodeID {
+		return false, nil
+	}
+	return true, m.env.CallNode(ctx, node, Name+"."+name, in, out)
+}
+
 func (m *Module) save(ctx context.Context, in struct {
 	Signed did.Signed `json:"signed"`
+	Vault  string     `json:"vault"`
 }) (map[string]any, error) {
+	var out map[string]any
+	if forwarded, err := m.forward(ctx, in.Vault, "save", map[string]any{"signed": in.Signed}, &out); forwarded {
+		return out, err
+	}
 	// The root itself signs, not a device: a device authorized by the root
 	// mustn't be able to lock the person out by replacing the blob.
 	if in.Signed.Delegation != nil {
@@ -112,12 +127,17 @@ func (m *Module) save(ctx context.Context, in struct {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"id": id, "root": root, "version": version}, nil
+	return map[string]any{"id": id, "root": root, "node": m.env.NodeID, "version": version}, nil
 }
 
 func (m *Module) open(ctx context.Context, in struct {
 	Proof []byte `json:"proof"`
+	Vault string `json:"vault"`
 }) (map[string]any, error) {
+	var out map[string]any
+	if forwarded, err := m.forward(ctx, in.Vault, "open", map[string]any{"proof": in.Proof}, &out); forwarded {
+		return out, err
+	}
 	id, err := accountID(in.Proof)
 	if err != nil {
 		return nil, err
@@ -129,5 +149,5 @@ func (m *Module) open(ctx context.Context, in struct {
 	} else if err != nil {
 		return nil, err
 	}
-	return map[string]any{"id": id, "root": a.Root, "blob": a.Blob, "version": version}, nil
+	return map[string]any{"id": id, "root": a.Root, "node": m.env.NodeID, "blob": a.Blob, "version": version}, nil
 }

@@ -103,11 +103,14 @@ async function getAuthorized(): Promise<void> {
   $('device-did').textContent = device.did
   $('copy-device').onclick = () => navigator.clipboard.writeText(device.did).catch(fail)
   const value = (id: string) => $<HTMLInputElement | HTMLTextAreaElement>(id).value
+  $<HTMLInputElement>('vault-node').value = (await Vault.remembered()) ?? ''
   while (!device.authorized()) {
     signin.returnValue = ''
     signin.showModal()
     await new Promise<void>(resolve => (signin.onclose = () => resolve()))
     statusEl.textContent = 'Signing in…'
+    // The vault: this node's, or another's, which this node forwards to.
+    const vault = new Vault(value('vault-node').trim() || undefined)
     try {
       switch (signin.returnValue) {
         case 'passkey':

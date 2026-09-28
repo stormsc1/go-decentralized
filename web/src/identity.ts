@@ -149,13 +149,21 @@ interface WrappedRoot {
   ct: string // base64, AES-GCM of the PKCS#8 private key
 }
 
-// Vault is the vault module on the node the app is served from.
+// Vault is the vault module, through the node the app is served from: its
+// own, or the one on the node named, which it forwards to.
 export class Vault {
+  constructor(readonly node?: string) {}
+
+  // remembered is the node of the vault this browser last signed in with.
+  static remembered(): Promise<string | undefined> {
+    return idbGet<string>('vault')
+  }
+
   private async call<T>(name: string, input: object): Promise<T> {
     const res = await fetch(`/v1/capabilities/vault.${name}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
+      body: JSON.stringify(this.node ? { ...input, vault: this.node } : input),
     })
     const body = await res.json()
     if (!res.ok) throw Object.assign(new Error(body.message ?? res.statusText), { code: body.code })
@@ -220,6 +228,7 @@ async function authorizeDevice(device: Device, vault: Vault, secret: Uint8Array<
   }
   const grant = { device: device.did, expires: new Date(Date.now() + days * 86_400_000).toISOString(), scope }
   await device.authorize(await signWith(root, didKey(pub), 'did.delegation', grant))
+  await idbPut('vault', vault.node ?? '')
 }
 
 // --- Ways to produce the secret -----------------------------------------------

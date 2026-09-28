@@ -1,10 +1,11 @@
 # yaml-language-server: $schema=../../spec/module.schema.json
 name: vault
-version: 0.1.0
-description: "Keeps people's root identities for those without a vault of their own, wrapped so the vault can't read them: a blob per account, opened with a proof only the person can derive, from a passkey or a passphrase. The vault signs nothing. See docs/design/identity-auth.md."
+version: 0.2.0
+description: "Keeps people's root identities for those without a vault of their own, wrapped so the vault can't read them: a blob per account, opened with a proof only the person can derive, from a passkey or a passphrase. The vault signs nothing. A person's vault may be on another node: name it, and this node forwards. See docs/design/identity-auth.md."
 capabilities:
   - name: save
     description: "Creates an account, or replaces its blob. The account is named by the hash of the proof, so only whoever derives the proof reaches it; the request is signed by the root itself (purpose vault.save), and only that root may replace the blob later."
+    access: network
     input:
       type: object
       required: [signed]
@@ -12,24 +13,29 @@ capabilities:
         signed:
           allOf: [{$ref: "#/$defs/signed"}]
           description: "Over {proof, blob}: the proof, and the wrapped root as the client keeps it, up to 8 KiB."
+        vault: {$ref: "#/$defs/node"}
     output:
       type: object
       properties:
         id: {type: string}
         root: {$ref: "#/$defs/did"}
+        node: {$ref: "#/$defs/node"}
         version: {type: integer}
   - name: open
     description: Returns an account's blob to whoever proves the account.
+    access: network
     input:
       type: object
       required: [proof]
       properties:
         proof: {$ref: "#/$defs/proof"}
+        vault: {$ref: "#/$defs/node"}
     output:
       type: object
       properties:
         id: {type: string}
         root: {$ref: "#/$defs/did"}
+        node: {$ref: "#/$defs/node"}
         blob: {type: object}
         version: {type: integer}
 stores:
@@ -49,6 +55,9 @@ $defs:
   did:
     type: string
     pattern: "^did:key:z[1-9A-HJ-NP-Za-km-z]+$"
+  node:
+    type: string
+    description: "A node's ID: as input, the node whose vault to use, this one's if absent; in output, the node the account is on."
   proof:
     type: string
     contentEncoding: base64
