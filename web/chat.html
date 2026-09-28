@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chat</title>
+    <link rel="stylesheet" href="/src/chat.css" />
+  </head>
+  <body>
+    <dialog id="authorize">
+      <form method="dialog">
+        <h1>Authorize this device</h1>
+        <p>This browser holds a device key. Your root identity must authorize it before you can chat. In the CLI, run:</p>
+        <pre>identity authorize <span id="device-did"></span></pre>
+        <p class="row"><button id="copy-device" type="button">Copy the device's DID</button></p>
+        <p>Then paste what it prints here:</p>
+        <textarea id="authorization" required rows="4" placeholder='{"data":"…","signer":"did:key:z…","sig":"…"}'></textarea>
+        <button>Authorize</button>
+      </form>
+    </dialog>
+    <dialog id="who">
+      <form method="dialog">
+        <h1>Who are you?</h1>
+        <p>Pick a name. You are your root identity; this device signs for it.</p>
+        <input id="name" type="text" required maxlength="80" placeholder="Your name" autocomplete="off" />
+        <button>Join</button>
+      </form>
+    </dialog>
+    <aside>
+      <header>
+        <strong id="me"></strong>
+        <button id="rename" title="Rename">✎</button>
+      </header>
+      <p class="address">
+        <input id="address" readonly title="Your address: your DID, and the node you registered on. Give it to people on other nodes to be invited." />
+        <button id="copy" title="Copy your address">⧉</button>
+      </p>
+      <h2>Channels <button id="new-channel" title="New channel">+</button></h2>
+      <ul id="channels"></ul>
+      <h2>Direct messages <button id="new-dm" title="New direct message">+</button></h2>
+      <ul id="dms"></ul>
+      <p id="status" role="status"></p>
+    </aside>
+    <main>
+      <header>
+        <h1 id="title">Pick a channel</h1>
+        <span id="members"></span>
+        <button id="invite" hidden>Invite…</button>
+      </header>
+      <ol id="messages"></ol>
+      <p id="typing"></p>
+      <form id="compose" hidden>
+        <input id="text" type="text" maxlength="4000" placeholder="Message" autocomplete="off" />
+        <button>Send</button>
+      </form>
+    </main>
+    <dialog id="pick">
+      <form method="dialog">
+        <h1 id="pick-title"></h1>
+        <select id="pick-user"></select>
+        <p>Or someone on another node, by their address:</p>
+        <input id="pick-address" type="text" placeholder="did:key:z…@<node id>" autocomplete="off" />
+        <div class="row"><button value="cancel" formnovalidate>Cancel</button><button value="ok">OK</button></div>
+      </form>
+    </dialog>
+    <script type="module" src="/src/chat.ts"></script>
+  </body>
+</html>

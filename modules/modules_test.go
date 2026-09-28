@@ -86,10 +86,14 @@ func TestCatalogue(t *testing.T) {
 	err := yaml.Unmarshal([]byte(`
 name: test
 network: {mdns: false}
+stores:
+  main: {path: ":memory:"}
 modules:
   - name: debug
   - name: greeter
     config: {greeting: Hi}
+  - name: chat
+    stores: {data: main}
 `), &cfg)
 	if err != nil {
 		t.Fatal(err)

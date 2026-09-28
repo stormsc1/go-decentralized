@@ -5,8 +5,13 @@ network:
   # Any node already in the network, to join through; no node is special.
   bootstrap:
     - ${BOOTSTRAP}
+stores:
+  main: {path: ":memory:"} # the CLI keeps nothing between runs
 modules:
   # Diagnostics: map_network, ping_node.
   - name: debug
+  # Try: chat.register id=me name=Me
+  - name: chat
+    stores: {data: main}
   # Try: greeter.greet id=<a node running greeter>
   - name: greeter

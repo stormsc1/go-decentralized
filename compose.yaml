@@ -105,10 +105,11 @@ services:
     command: ["host.sh", "10.20.0.254"]
     networks:
       corp-lan: { ipv4_address: 10.20.0.10 }
+    ports: ["8444:8090"] # kg's local API, for a second chat page (web/) on the corporate network
 
   kg:
     <<: [*org, *corp]
-    environment: { <<: *behind-nat, ORG: kg }
+    environment: { <<: *behind-nat, ORG: kg, NODE_API: ":8090" }
 
   kg-project-1:
     <<: [*project, *corp]

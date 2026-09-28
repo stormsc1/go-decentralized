@@ -129,7 +129,9 @@ func (g *Graph) Add(id string, e Event) ([]string, error) {
 // names the channel and its parents, once each.
 func (g *Graph) check(id string, e Event) error {
 	if len(e.Parents) == 0 {
-		if id != g.channel || e.Channel != "" {
+		// The create event is hashed without a channel, since its ID becomes
+		// the channel's; a stored copy may carry it.
+		if id != g.channel || (e.Channel != "" && e.Channel != g.channel) {
 			return fmt.Errorf("event %.8s has no parents, but doesn't create channel %.8s", id, g.channel)
 		}
 		return nil

@@ -1,0 +1,221 @@
+# yaml-language-server: $schema=../../spec/module.schema.json
+name: chat
+version: 0.2.0
+description: "Realtime chat: channels and direct messages across nodes, with edits, reactions, read receipts and typing. People are their did:key, and sign every event; nodes verify, keep a full copy of each channel a member of theirs is in, and push events to each other. See docs/design/identity-storage-chat.md."
+capabilities:
+  - name: register
+    description: "Registers a person on this node, or renames them: signed {name, time}, for the purpose chat.user. Their DID is the signer's."
+    input:
+      type: object
+      required: [signed]
+      properties:
+        signed: {$ref: "#/$defs/signed"}
+    output: {$ref: "#/$defs/user"}
+  - name: users
+    description: Lists the people this node knows, those with the given DIDs if any.
+    input:
+      type: object
+      properties:
+        ids: {type: array, items: {$ref: "#/$defs/did"}}
+    output:
+      type: object
+      properties:
+        users: {type: array, items: {$ref: "#/$defs/user"}}
+  - name: user_info
+    description: Returns a person registered on this node, for other nodes.
+    access: network
+    input:
+      type: object
+      required: [id]
+      properties:
+        id: {$ref: "#/$defs/did"}
+    output: {$ref: "#/$defs/user"}
+  - name: submit
+    description: "Takes an event its author signed, for the purpose chat.event: create, invite, message, edit, reaction or receipt. The node checks it, stores it, tells subscribers, and pushes it to the other members' nodes."
+    input:
+      type: object
+      required: [signed]
+      properties:
+        signed: {$ref: "#/$defs/signed"}
+    output: {$ref: "#/$defs/event"}
+  - name: channels
+    description: Lists the channels the person signed in is in.
+    output:
+      type: object
+      properties:
+        channels: {type: array, items: {$ref: "#/$defs/channel"}}
+  - name: history
+    description: Returns a channel's latest events in causal order, oldest first, to someone in it who signed in.
+    input:
+      type: object
+      required: [channel]
+      properties:
+        channel: {$ref: "#/$defs/id"}
+        limit: {type: integer, minimum: 1, maximum: 1000, description: Defaults to 100.}
+    output:
+      type: object
+      properties:
+        events: {type: array, items: {$ref: "#/$defs/event"}}
+  - name: start_typing
+    description: Tells the channel's clients, here and on the other members' nodes, that the person signed in is typing, with a typing event. Nothing is stored or signed.
+    input:
+      type: object
+      required: [channel]
+      properties:
+        channel: {$ref: "#/$defs/id"}
+  - name: heartbeat
+    description: "A heartbeat from the client of the person signed in, every 30 seconds or so: they're online until it stops. Their channels' clients hear of it, as presence events, here and on the other members' nodes."
+  - name: online
+    description: Says which of the given people are online, as far as this node knows, to someone signed in.
+    input:
+      type: object
+      required: [users]
+      properties:
+        users: {type: array, items: {$ref: "#/$defs/did"}}
+    output:
+      type: object
+      properties:
+        online: {type: array, items: {$ref: "#/$defs/did"}}
+  - name: push
+    description: Takes a channel's new events from another member's node, which fetches what it lacks from the pusher. Nodes call it on each other.
+    access: network
+    internal: true
+    input:
+      type: object
+      required: [channel, events]
+      properties:
+        channel: {$ref: "#/$defs/id"}
+        events: {type: array, items: {$ref: "#/$defs/signed"}}
+  - name: fetch
+    description: "Returns a channel as this node has it, for another member's node: the channel, who is in it, and its events, all or the ones asked for."
+    access: network
+    internal: true
+    input:
+      type: object
+      required: [channel]
+      properties:
+        channel: {$ref: "#/$defs/id"}
+        ids: {type: array, items: {$ref: "#/$defs/id"}}
+    output:
+      type: object
+      properties:
+        channel: {$ref: "#/$defs/channel"}
+        memberships: {type: array, items: {$ref: "#/$defs/membership"}}
+        events: {type: array, items: {$ref: "#/$defs/signed"}}
+  - name: sync
+    description: "Takes another member's node's heads of a channel, fetches what this node lacks of them, and answers with its own heads, for the other node to do the same. Nodes call it on each other, at start and every so often, so they catch up after being apart."
+    access: network
+    internal: true
+    input:
+      type: object
+      required: [channel, heads]
+      properties:
+        channel: {$ref: "#/$defs/id"}
+        heads: {type: array, items: {$ref: "#/$defs/id"}}
+    output:
+      type: object
+      properties:
+        heads: {type: array, items: {$ref: "#/$defs/id"}}
+  - name: notice
+    description: "Takes what isn't an event from another member's node: someone typing in a channel, or going online or offline."
+    access: network
+    internal: true
+    input:
+      type: object
+      required: [kind, user]
+      properties:
+        kind: {enum: [typing, presence]}
+        user: {$ref: "#/$defs/did"}
+        channel: {$ref: "#/$defs/id", description: For typing.}
+        online: {type: boolean, description: For presence.}
+events:
+  - name: posted
+    description: "An event was added to a channel on this node: from a person here, or pushed by another node."
+    schema: {$ref: "#/$defs/event"}
+  - name: typing
+    description: A person is typing in a channel, here or on another member's node.
+    schema:
+      type: object
+      required: [channel, user]
+      properties:
+        channel: {$ref: "#/$defs/id"}
+        user: {$ref: "#/$defs/did"}
+  - name: presence
+    description: A person went online or offline.
+    schema:
+      type: object
+      required: [user, online]
+      properties:
+        user: {$ref: "#/$defs/did"}
+        online: {type: boolean}
+config:
+  type: object
+  properties:
+    sync: {type: string, description: "How often the node catches up with other members' nodes, e.g. 30s. Defaults to 1m."}
+stores:
+  - name: data
+    type: entity
+    entities:
+      - name: user
+        schema: {$ref: "#/$defs/user"}
+        indexes: [name]
+      - name: channel
+        schema: {$ref: "#/$defs/channel"}
+        indexes: [created]
+      - name: membership
+        schema: {$ref: "#/$defs/membership"}
+        indexes: [channel, user]
+      - name: event
+        schema: {$ref: "#/$defs/event"}
+        indexes: [channel, time]
+$defs:
+  id: {type: string, minLength: 1, maxLength: 128, description: A hash, in hex.}
+  did: {type: string, minLength: 1, maxLength: 256, description: "A person's DID, did:key:z…"}
+  node: {type: string, description: "A node's ID: where a person is registered, and so where their copies of channels are."}
+  signed:
+    type: object
+    required: [data, signer, sig]
+    properties:
+      data: {type: string, contentEncoding: base64, description: What was signed, as it was.}
+      signer: {$ref: "#/$defs/did"}
+      sig: {type: string, contentEncoding: base64}
+      delegation: {type: object, description: "The root's delegation to the signer, if a device signed. See spec/identity.md."}
+  user:
+    type: object
+    required: [id, name, node]
+    properties:
+      id: {$ref: "#/$defs/did"}
+      name: {type: string}
+      node: {$ref: "#/$defs/node"}
+      created: {type: string, format: date-time}
+  membership:
+    type: object
+    required: [channel, user, node]
+    properties:
+      channel: {$ref: "#/$defs/id"}
+      user: {$ref: "#/$defs/did"}
+      node: {$ref: "#/$defs/node"}
+      since: {type: string, format: date-time}
+  channel:
+    type: object
+    required: [id, kind, created]
+    properties:
+      id: {$ref: "#/$defs/id", description: The hash of the event that created it.}
+      name: {type: string}
+      kind: {enum: [channel, dm]}
+      created: {type: string, format: date-time}
+      created_by: {$ref: "#/$defs/did"}
+      heads: {type: array, items: {$ref: "#/$defs/id"}, description: "The latest events, which the next names as parents."}
+      members: {type: array, items: {$ref: "#/$defs/membership"}, description: In answers only.}
+  event:
+    type: object
+    required: [id, channel, author, kind, time, signed]
+    properties:
+      id: {$ref: "#/$defs/id", description: The hash of what the author signed.}
+      channel: {$ref: "#/$defs/id"}
+      author: {$ref: "#/$defs/did"}
+      kind: {enum: [create, invite, join, message, edit, reaction, receipt]}
+      body: {type: object, description: "create: {name, kind, members: [{user, node}]}. invite: {user, node}. message: {text}. edit: {event, text}. reaction: {event, emoji}. receipt: {event}."}
+      parents: {type: array, items: {$ref: "#/$defs/id"}, description: The latest events the author had seen.}
+      time: {type: string, format: date-time}
+      signed: {$ref: "#/$defs/signed"}

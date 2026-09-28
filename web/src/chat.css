@@ -1,0 +1,211 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --line: light-dark(#ddd, #333);
+  --muted: light-dark(#666, #999);
+  --mine: light-dark(#e8f0fe, #1e2a3a);
+  --hover: light-dark(#f2f2f2, #222);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  background: light-dark(#fff, #111);
+}
+
+aside {
+  border-right: 1px solid var(--line);
+  padding: 12px;
+  overflow: auto;
+}
+
+aside header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.address {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+
+.address input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+aside h2 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 16px 0 4px;
+  display: flex;
+  justify-content: space-between;
+}
+
+aside ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+aside li {
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+aside li:hover {
+  background: var(--hover);
+}
+
+aside li.current {
+  background: var(--mine);
+}
+
+main {
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  min-height: 0;
+}
+
+main header {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+main h1 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+#members {
+  color: var(--muted);
+  font-size: 0.85rem;
+  flex: 1;
+}
+
+#messages {
+  list-style: none;
+  margin: 0;
+  padding: 8px 16px;
+  overflow: auto;
+}
+
+#messages li {
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin: 2px 0;
+}
+
+#messages li.mine {
+  background: var(--mine);
+}
+
+#messages li:hover .reactions button {
+  visibility: visible;
+}
+
+.meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reactions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.reactions button {
+  font-size: 0.75rem;
+  visibility: hidden;
+}
+
+.reactions button:first-child:not(:only-child) {
+  visibility: visible;
+}
+
+#typing {
+  min-height: 1.2em;
+  margin: 0;
+  padding: 0 16px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+#compose {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+
+#compose input {
+  flex: 1;
+  padding: 8px;
+}
+
+#status {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+dialog {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 20px;
+  min-width: 300px;
+}
+
+dialog h1 {
+  font-size: 1.1rem;
+  margin-top: 0;
+}
+
+dialog input,
+dialog select,
+dialog textarea {
+  width: 100%;
+  padding: 8px;
+  margin-bottom: 12px;
+  box-sizing: border-box;
+}
+
+dialog pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: 0.75rem;
+  background: var(--hover);
+  padding: 8px;
+  border-radius: 4px;
+}
+
+dialog .row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+button {
+  cursor: pointer;
+}
