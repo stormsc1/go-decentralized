@@ -45,8 +45,13 @@ wrap  = HKDF-SHA-256(secret, salt "go-decentralized vault", info "wrap"), 256 bi
 proof = HKDF-SHA-256(secret, salt "go-decentralized vault", info "proof"), 32 bytes
 ```
 
-- `vault.open {proof}` returns the account the proof names, the SHA-256 of the proof: its root's DID and its blob. The proof grants reading only.
+- `vault.open {proof}` returns the account the proof names, the SHA-256 of the proof: its root's DID, its blob and the node it's on. The proof grants reading only.
 - `vault.save {signed}` creates the account or replaces its blob. `signed` is `{proof, blob}` signed by the root itself, not a device, for the purpose `vault.save`; only the root an account was created by may replace its blob.
+- Both take `vault`, a node ID: the node called forwards to the vault there, so an app reaches a person's vault through whatever node serves it.
 - The blob, version 1, is `{"v": 1, "pub": "<base64 raw public key>", "iv": "<base64, 12 bytes>", "ct": "<base64>"}`: `ct` is the root's PKCS#8 private key under AES-256-GCM with `wrap` and `iv`.
 
 The client unwraps the root in memory only to sign a delegation to the device, then forgets it.
+
+## Profiles
+
+A person's profile — name, avatar, bio — is signed data for the purpose `profile.set`, whose data is `{"name": "…", "bio": "…", "avatar": "<sha-256 of the image, hex>", "time": "<when signed>"}`; `bio` and `avatar` are optional. The node the person gives it to (`profile.set`, [modules/profile/module.yaml](../modules/profile/module.yaml)) is their home: it keeps the newest, announces the DID as a key in the DHT ([routing.md](routing.md), "Joining and announcing"), and serves the profile and the avatar's bytes to other nodes, which check the signature and the hash. A DID thus resolves to its home nodes with `routing.find_providers {key: <DID>}`. See docs/design/profiles.md.

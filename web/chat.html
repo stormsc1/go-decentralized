@@ -36,10 +36,12 @@
     </dialog>
     <dialog id="who">
       <form method="dialog">
-        <h1>Who are you?</h1>
-        <p>Pick a name. You are your root identity; this device signs for it.</p>
+        <h1>Your profile</h1>
+        <p>The same in every service. It's kept on this node, your home, signed by you, and shown to people you share something with.</p>
         <input id="name" type="text" required maxlength="80" placeholder="Your name" autocomplete="off" />
-        <button>Join</button>
+        <textarea id="bio" maxlength="500" rows="2" placeholder="A line about you (optional)"></textarea>
+        <label class="avatar-pick"><img id="avatar-preview" class="avatar" alt="" hidden /> Avatar: <input id="avatar" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
+        <button value="save">Save</button>
       </form>
     </dialog>
     <aside>

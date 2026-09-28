@@ -88,6 +88,7 @@ name: test
 network: {mdns: false}
 stores:
   main: {path: ":memory:"}
+  files: {driver: file}
 modules:
   - name: debug
   - name: greeter
@@ -96,6 +97,8 @@ modules:
     stores: {data: main}
   - name: vault
     stores: {data: main}
+  - name: profile
+    stores: {data: main, avatars: files}
 `), &cfg)
 	if err != nil {
 		t.Fatal(err)

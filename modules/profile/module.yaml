@@ -1,0 +1,134 @@
+# yaml-language-server: $schema=../../spec/module.schema.json
+name: profile
+version: 0.1.0
+description: "People's profiles: a name, an avatar and a bio, the same in every service. A person signs their profile; their home node keeps it, announces their DID in the DHT and serves the profile to any node that asks; other nodes cache it and check the signature. See docs/design/profiles.md."
+capabilities:
+  - name: set
+    description: "Sets the profile of the person signed in: signed {name, bio, avatar, time} for the purpose profile.set, by the person's device. This node becomes their home, if it wasn't. A profile older than the one kept is refused."
+    input:
+      type: object
+      required: [signed]
+      properties:
+        signed: {$ref: "#/$defs/signed"}
+    output: {$ref: "#/$defs/profile"}
+  - name: set_avatar
+    description: "Keeps an image for the person signed in to name as their avatar: PNG, JPEG, WebP or GIF, up to 256 KiB. Returns its key, the SHA-256 of the bytes."
+    input:
+      type: object
+      required: [data, content_type]
+      properties:
+        data: {type: string, contentEncoding: base64}
+        content_type: {enum: [image/png, image/jpeg, image/webp, image/gif]}
+    output:
+      type: object
+      properties:
+        avatar: {$ref: "#/$defs/key"}
+  - name: get
+    description: "Returns a person's profile: from here if this is their home, else the copy kept if it's fresh, else fetched from their home node, found through the node given, the one the copy came from, or the DHT. Fails with not_found if nobody has it."
+    input:
+      type: object
+      required: [id]
+      properties:
+        id: {$ref: "#/$defs/did"}
+        node: {$ref: "#/$defs/node", description: Where the person is known to be, if known.}
+    output: {$ref: "#/$defs/profile"}
+  - name: lookup
+    description: Returns the profiles of several people, as get does, leaving out those nobody has.
+    input:
+      type: object
+      required: [people]
+      properties:
+        people:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            required: [id]
+            properties:
+              id: {$ref: "#/$defs/did"}
+              node: {$ref: "#/$defs/node"}
+    output:
+      type: object
+      properties:
+        profiles: {type: array, items: {$ref: "#/$defs/profile"}}
+  - name: avatar
+    description: Returns a person's avatar, fetched from their home node and kept if it wasn't here.
+    input:
+      type: object
+      required: [id]
+      properties:
+        id: {$ref: "#/$defs/did"}
+    output:
+      type: object
+      properties:
+        key: {$ref: "#/$defs/key"}
+        content_type: {type: string}
+        data: {type: string, contentEncoding: base64}
+  - name: fetch
+    description: Returns the signed profile of a person whose home this node is, for other nodes.
+    access: network
+    input:
+      type: object
+      required: [id]
+      properties:
+        id: {$ref: "#/$defs/did"}
+    output: {$ref: "#/$defs/profile"}
+  - name: fetch_avatar
+    description: Returns an avatar this node has, by key, for other nodes.
+    access: network
+    input:
+      type: object
+      required: [key]
+      properties:
+        key: {$ref: "#/$defs/key"}
+    output:
+      type: object
+      properties:
+        key: {$ref: "#/$defs/key"}
+        content_type: {type: string}
+        data: {type: string, contentEncoding: base64}
+events:
+  - name: updated
+    description: A person's profile changed, here or as fetched.
+    schema:
+      type: object
+      required: [id]
+      properties:
+        id: {$ref: "#/$defs/did"}
+config:
+  type: object
+  properties:
+    fresh: {type: string, description: "How long a fetched profile is served before its home is asked again, e.g. 5m. Defaults to 10m."}
+stores:
+  - name: data
+    type: entity
+    entities:
+      - name: profile
+        schema: {$ref: "#/$defs/profile"}
+        indexes: [node, name]
+  - name: avatars
+    type: blob
+    description: Avatars, by the SHA-256 of their bytes.
+$defs:
+  did: {type: string, minLength: 1, maxLength: 256, description: "A person's DID, did:key:z…"}
+  node: {type: string, description: A node's ID.}
+  key: {type: string, pattern: "^[0-9a-f]{64}$", description: "An avatar's key: the SHA-256 of its bytes, in hex."}
+  signed:
+    type: object
+    required: [data, signer, sig]
+    properties:
+      data: {type: string, contentEncoding: base64, description: What was signed, as it was.}
+      signer: {$ref: "#/$defs/did"}
+      sig: {type: string, contentEncoding: base64}
+  profile:
+    type: object
+    required: [id, name, time, node, signed]
+    properties:
+      id: {$ref: "#/$defs/did"}
+      name: {type: string, minLength: 1, maxLength: 80}
+      bio: {type: string, maxLength: 500}
+      avatar: {$ref: "#/$defs/key"}
+      time: {type: string, format: date-time, description: When the person signed it. Newer replaces older.}
+      node: {$ref: "#/$defs/node", description: The person's home node.}
+      signed: {$ref: "#/$defs/signed", description: The person's signature, for anyone to check.}
+      fetched: {type: string, format: date-time, description: When this node last got it from its home, if this isn't it.}

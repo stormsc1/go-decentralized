@@ -31,21 +31,21 @@ func TestLab(t *testing.T) {
 
 	// Alice lives on gl, Bob on kg; each signs in to their node.
 	var au, bu User
-	gl.must("register", map[string]any{"signed": alice.sign(t, UserPurpose, map[string]any{"name": "Alice (gl)", "time": time.Now()})}, &au)
-	kg.must("register", map[string]any{"signed": bob.sign(t, UserPurpose, map[string]any{"name": "Bob (kg)", "time": time.Now()})}, &bu)
+	gl.must("register", map[string]any{"signed": alice.sign(t, UserPurpose, map[string]any{"time": time.Now()})}, &au)
+	kg.must("register", map[string]any{"signed": bob.sign(t, UserPurpose, map[string]any{"time": time.Now()})}, &bu)
 	if au.Node != glID || bu.Node != kgID {
 		t.Fatalf("alice on %.8s, bob on %.8s", au.Node, bu.Node)
 	}
 	gl.login(alice)
 	kg.login(bob)
 
-	// Alice makes a channel with Bob: gl asks kg for Bob's name and pushes
-	// the channel to kg, through the relay.
+	// Alice makes a channel with Bob: gl notes where Bob is and pushes the
+	// channel to kg, through the relay.
 	var created Event
 	gl.must("submit", map[string]any{"signed": alice.create(t, "gl+kg", "", map[string]string{alice.id: glID, bob.id: kgID})}, &created)
 	var known struct{ Users []User }
 	gl.must("users", map[string]any{"ids": []string{bob.id}}, &known)
-	if len(known.Users) != 1 || known.Users[0].Name != "Bob (kg)" {
+	if len(known.Users) != 1 || known.Users[0].Node != kgID {
 		t.Fatalf("gl knows bob as %+v", known.Users)
 	}
 	var ch Channel
@@ -93,8 +93,8 @@ func TestLabCatchUp(t *testing.T) {
 	kg := newAPI(t, envOr("KG_API", "http://localhost:8444"))
 	glID, kgID := gl.nodeID(), kg.nodeID()
 	alice, bob := newPerson(t), newPerson(t)
-	gl.must("register", map[string]any{"signed": alice.sign(t, UserPurpose, map[string]any{"name": "Alice (gl)", "time": time.Now()})}, nil)
-	kg.must("register", map[string]any{"signed": bob.sign(t, UserPurpose, map[string]any{"name": "Bob (kg)", "time": time.Now()})}, nil)
+	gl.must("register", map[string]any{"signed": alice.sign(t, UserPurpose, map[string]any{"time": time.Now()})}, nil)
+	kg.must("register", map[string]any{"signed": bob.sign(t, UserPurpose, map[string]any{"time": time.Now()})}, nil)
 	gl.login(alice)
 	kg.login(bob)
 	var created Event

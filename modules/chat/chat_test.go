@@ -119,10 +119,10 @@ func (c tester) must(name string, in any, out any) {
 	}
 }
 
-func (c tester) register(p person, name string) User {
+func (c tester) register(p person) User {
 	c.t.Helper()
 	var u User
-	c.must("register", map[string]any{"signed": p.sign(c.t, UserPurpose, map[string]any{"name": name, "time": time.Now()})}, &u)
+	c.must("register", map[string]any{"signed": p.sign(c.t, UserPurpose, map[string]any{"time": time.Now()})}, &u)
 	return u
 }
 
@@ -222,16 +222,16 @@ func TestChat(t *testing.T) {
 	}
 
 	// People are their root DIDs, signing from a device their root
-	// authorized; they sign their names, and renaming keeps them.
+	// authorized; registering says which node their copies are on.
 	alice, bob, carol := newPerson(t), newPerson(t), newPerson(t)
-	if u := c.register(alice, "Alice"); u.ID != alice.id || u.Node != self {
+	if u := c.register(alice); u.ID != alice.id || u.Node != self {
 		t.Fatalf("registered %+v", u)
 	}
-	if u := c.register(alice, "Alice Liddell"); u.Name != "Alice Liddell" {
-		t.Fatalf("renamed %+v", u)
+	if u := c.register(alice); u.ID != alice.id {
+		t.Fatalf("registered again %+v", u)
 	}
-	c.register(bob, "Bob")
-	if err := c.call("register", map[string]any{"signed": bob.sign(t, "chat.other", map[string]any{"name": "x"})}, nil); module.Code(err) != module.CodeInvalidArgument {
+	c.register(bob)
+	if err := c.call("register", map[string]any{"signed": bob.sign(t, "chat.other", map[string]any{"time": time.Now()})}, nil); module.Code(err) != module.CodeInvalidArgument {
 		t.Fatalf("registered with a signature for something else: err = %v", err)
 	}
 
@@ -339,7 +339,7 @@ func TestChat(t *testing.T) {
 
 	// Anyone in a channel invites; the invitee then sees it. Invites carry
 	// the invitee's node.
-	c.register(carol, "Carol")
+	c.register(carol)
 	if _, err := c.submit(bob.event(t, ch.ID, c.as(bob).channel().Heads, "invite", map[string]string{"user": carol.id, "node": self})); err != nil {
 		t.Fatal(err)
 	}
@@ -452,22 +452,22 @@ func TestAcrossNodes(t *testing.T) {
 	a, aAddr := start(t, "a", nil, nil)
 	b, _ := start(t, "b", []string{aAddr}, nil)
 	alice, bob := newPerson(t), newPerson(t)
-	a.register(alice, "Alice")
-	b.register(bob, "Bob")
+	a.register(alice)
+	b.register(bob)
 	eventually(t, "a can reach b", func() bool {
 		_, err := a.n.Call(context.Background(), "routing.find_node", json.RawMessage(`{"id":"`+b.n.ID+`"}`))
 		return err == nil
 	})
 
-	// Alice, on a, makes a channel with Bob, who is on b. a asks b Bob's
-	// name and pushes the channel to b, which copies it.
+	// Alice, on a, makes a channel with Bob, who is on b. a notes where Bob
+	// is and pushes the channel to b, which copies it.
 	created, err := a.submit(alice.create(t, "cross", "", map[string]string{alice.id: a.n.ID, bob.id: b.n.ID}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var known struct{ Users []User }
 	a.must("users", map[string]any{"ids": []string{bob.id}}, &known)
-	if len(known.Users) != 1 || known.Users[0].Name != "Bob" || known.Users[0].Node != b.n.ID {
+	if len(known.Users) != 1 || known.Users[0].Node != b.n.ID {
 		t.Fatalf("a knows bob as %+v", known.Users)
 	}
 	eventually(t, "b has the channel", func() bool {
@@ -593,10 +593,10 @@ func TestCatchUp(t *testing.T) {
 	bKey, _ := identity.Load("")
 	bID := module.NodeID(bKey.Public().(ed25519.PublicKey))
 	alice, bob := newPerson(t), newPerson(t)
-	a.register(alice, "Alice")
+	a.register(alice)
 
 	// Alice makes a channel with Bob, whose node isn't running yet: the push
-	// fails, and Bob is known by a placeholder.
+	// fails.
 	created, err := a.submit(alice.create(t, "later", "", map[string]string{alice.id: a.n.ID, bob.id: bID}))
 	if err != nil {
 		t.Fatal(err)
@@ -606,18 +606,14 @@ func TestCatchUp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Bob's node comes up and joins; a's sync brings it the channel, and it
-	// learns Bob's name. Then it stays in step through a's later events.
+	// Bob's node comes up and joins; a's sync brings it the channel. Then
+	// it stays in step through a's later events.
 	b, _ := start(t, "b", []string{aAddr}, bKey)
-	b.register(bob, "Bob")
+	b.register(bob)
 	eventually(t, "b caught up", func() bool { return b.as(bob).has(created.ID, m1.ID) })
 	if got := kinds(b.as(bob).history(created.ID)); got != "create,message" {
 		t.Fatalf("b's copy = %s", got)
 	}
-	var known struct{ Users []User }
-	eventually(t, "a learned bob's name", func() bool {
-		return a.call("users", map[string]any{"ids": []string{bob.id}}, &known) == nil && len(known.Users) == 1 && known.Users[0].Name == "Bob"
-	})
 	m2, err := b.submit(bob.event(t, created.ID, b.as(bob).channel().Heads, "message", map[string]string{"text": "here now"}))
 	if err != nil {
 		t.Fatal(err)

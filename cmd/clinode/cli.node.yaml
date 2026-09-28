@@ -7,11 +7,13 @@ network:
     - ${BOOTSTRAP}
 stores:
   main: {path: ":memory:"} # the CLI keeps nothing between runs
+  files: {driver: file}
 modules:
   # Diagnostics: map_network, ping_node.
   - name: debug
-  # Try: chat.register id=me name=Me
   - name: chat
     stores: {data: main}
+  - name: profile
+    stores: {data: main, avatars: files}
   # Try: greeter.greet id=<a node running greeter>
   - name: greeter

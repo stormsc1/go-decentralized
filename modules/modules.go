@@ -7,6 +7,7 @@ import (
 	"go-decentralized/modules/chat"
 	"go-decentralized/modules/debug"
 	"go-decentralized/modules/greeter"
+	"go-decentralized/modules/profile"
 	"go-decentralized/modules/vault"
 )
 
@@ -15,5 +16,6 @@ var Factories = map[string]module.Factory{
 	chat.Name:    chat.New,
 	debug.Name:   debug.New,
 	greeter.Name: greeter.New,
+	profile.Name: profile.New,
 	vault.Name:   vault.New,
 }

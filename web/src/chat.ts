@@ -3,15 +3,25 @@
 // this browser holds a device key the root authorized (through the vault,
 // with a passkey, see identity.ts), signs in to the node with it, and signs
 // every event with it. The node verifies, stores and pushes them to the
-// other members' nodes. See spec/identity.md and
-// docs/design/identity-auth.md.
+// other members' nodes. Names and avatars come from the profile module:
+// yours is kept on this node, others' are fetched from their home nodes.
+// See spec/identity.md and docs/design/identity-auth.md.
 
-import { Device, Vault, signIn } from './identity'
+import { Device, Vault, base64, signIn } from './identity'
 
 interface User {
   id: string // the person's DID
-  name: string
   node: string // where they registered
+}
+
+// Profile is a person as the profile module knows them.
+interface Profile {
+  id: string
+  name: string
+  bio?: string
+  avatar?: string // the image's key
+  time: string
+  node: string // their home node
 }
 
 interface Membership {
@@ -50,21 +60,23 @@ const who = $<HTMLDialogElement>('who')
 const pick = $<HTMLDialogElement>('pick')
 const signin = $<HTMLDialogElement>('signin')
 const statusEl = $('status')
-const vault = new Vault()
 
 // --- The node --------------------------------------------------------------
 
-// call calls a chat capability, as the person signed in.
-async function call<T = any>(name: string, input: object = {}): Promise<T> {
-  const res = await fetch(`/v1/capabilities/chat.${name}`, {
+// callRef calls a capability, as the person signed in.
+async function callRef<T = any>(ref: string, input: object = {}): Promise<T> {
+  const res = await fetch(`/v1/capabilities/${ref}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   })
   const body = await res.json()
-  if (!res.ok) throw new Error(body.message ?? res.statusText)
+  if (!res.ok) throw Object.assign(new Error(body.message ?? res.statusText), { code: body.code })
   return body
 }
+
+const call = <T = any>(name: string, input: object = {}) => callRef<T>('chat.' + name, input)
+const profileCall = <T = any>(name: string, input: object = {}) => callRef<T>('profile.' + name, input)
 
 // login signs the device in to the node: a challenge, signed for the node.
 async function login(): Promise<void> {
@@ -77,12 +89,15 @@ async function login(): Promise<void> {
 let device: Device
 let me: User
 const users = new Map<string, User>()
+const profiles = new Map<string, Profile>()
+const avatars = new Map<string, string>() // avatar key -> data URL
 let channels: Channel[] = []
 let current: Channel | undefined
 const typing = new Map<string, number>() // user -> when they last typed, in the current channel
 const online = new Set<string>() // who's online, as the node knows
 
-const nameOf = (id: string) => users.get(id)?.name ?? id.slice(-8)
+const nameOf = (id: string) => profiles.get(id)?.name ?? id.slice(-8)
+const avatarOf = (id: string) => avatars.get(profiles.get(id)?.avatar ?? '')
 const address = (u: User) => `${u.id}@${u.node}`
 
 // submit signs an event and hands it to the node.
@@ -132,27 +147,90 @@ async function getAuthorized(): Promise<void> {
   }
 }
 
-async function ask(name: string): Promise<User> {
-  return new Promise(resolve => {
-    const input = $<HTMLInputElement>('name')
-    input.value = name
-    who.showModal()
-    who.onclose = async () => {
-      const signed = await device.sign('chat.user', { name: input.value.trim() || 'Anonymous', time: new Date().toISOString() })
-      resolve(await call<User>('register', { signed }))
-    }
-  })
+// --- Profiles -----------------------------------------------------------------
+
+// loadProfiles fetches the profiles of people not known yet, and their
+// avatars, through this node, which asks their home nodes.
+async function loadProfiles(people: Membership[], refresh = false): Promise<void> {
+  const wanted = people.filter(p => refresh || !profiles.has(p.user)).map(p => ({ id: p.user, node: p.node }))
+  if (wanted.length === 0) return
+  const { profiles: found } = await profileCall<{ profiles: Profile[] }>('lookup', { people: wanted.slice(0, 200) })
+  for (const p of found) profiles.set(p.id, p)
+  await Promise.all(
+    found
+      .filter(p => p.avatar && !avatars.has(p.avatar))
+      .map(async p => {
+        const img = await profileCall<{ content_type: string; data: string }>('avatar', { id: p.id }).catch(() => undefined)
+        if (img) avatars.set(p.avatar!, `data:${img.content_type};base64,${img.data}`)
+      }),
+  )
 }
+
+// editProfile has the person fill in their profile, signs it and keeps it
+// on this node, their home. Until they have one, the dialog stays.
+async function editProfile(existing?: Profile): Promise<Profile> {
+  const name = $<HTMLInputElement>('name')
+  const bio = $<HTMLTextAreaElement>('bio')
+  const file = $<HTMLInputElement>('avatar')
+  const preview = $<HTMLImageElement>('avatar-preview')
+  for (;;) {
+    name.value = existing?.name ?? ''
+    bio.value = existing?.bio ?? ''
+    file.value = ''
+    const current = existing?.avatar ? avatars.get(existing.avatar) : undefined
+    preview.hidden = !current
+    if (current) preview.src = current
+    who.returnValue = ''
+    who.showModal()
+    await new Promise<void>(resolve => (who.onclose = () => resolve()))
+    if (who.returnValue !== 'save' && existing) return existing
+    if (!name.value.trim()) continue
+    try {
+      let avatar = existing?.avatar
+      const picked = file.files?.[0]
+      if (picked) {
+        if (picked.size > 256 * 1024) throw new Error('an avatar is at most 256 KiB')
+        const data = base64(new Uint8Array(await picked.arrayBuffer()))
+        avatar = (await profileCall<{ avatar: string }>('set_avatar', { data, content_type: picked.type })).avatar
+        avatars.set(avatar, `data:${picked.type};base64,${data}`)
+      }
+      const claim: Record<string, unknown> = { name: name.value.trim(), time: new Date().toISOString() }
+      if (bio.value.trim()) claim.bio = bio.value.trim()
+      if (avatar) claim.avatar = avatar
+      const p = await profileCall<Profile>('set', { signed: await device.sign('profile.set', claim) })
+      profiles.set(p.id, p)
+      return p
+    } catch (err) {
+      fail(err)
+      if (existing) return existing
+    }
+  }
+}
+
+// avatarImg makes an <img> of a person's avatar, if they have one.
+function avatarImg(id: string): HTMLImageElement | undefined {
+  const src = avatarOf(id)
+  if (!src) return undefined
+  const img = document.createElement('img')
+  img.className = 'avatar'
+  img.src = src
+  img.alt = ''
+  return img
+}
+
+// --- The chat -------------------------------------------------------------------
 
 async function loadUsers() {
   const { users: list } = await call<{ users: User[] }>('users')
   users.clear()
   for (const u of list) users.set(u.id, u)
+  await loadProfiles(list.map(u => ({ user: u.id, node: u.node })))
 }
 
 async function loadChannels() {
   channels = (await call<{ channels: Channel[] }>('channels')).channels
   if (current) current = channels.find(ch => ch.id === current!.id) ?? current
+  await loadProfiles(channels.flatMap(ch => ch.members ?? []))
   renderChannels()
 }
 
@@ -249,7 +327,9 @@ function renderMessages(messages: Message[]) {
       li.classList.toggle('mine', m.event.author === me.id)
       const meta = document.createElement('div')
       meta.className = 'meta'
-      meta.textContent = `${nameOf(m.event.author)} · ${new Date(m.event.time).toLocaleTimeString()}${m.edited ? ' · edited' : ''}`
+      const img = avatarImg(m.event.author)
+      if (img) meta.append(img)
+      meta.append(`${nameOf(m.event.author)} · ${new Date(m.event.time).toLocaleTimeString()}${m.edited ? ' · edited' : ''}`)
       const text = document.createElement('div')
       text.className = 'text'
       text.textContent = m.text
@@ -305,10 +385,12 @@ async function pickUser(title: string): Promise<Membership | undefined> {
   const select = $<HTMLSelectElement>('pick-user')
   const addressInput = $<HTMLInputElement>('pick-address')
   addressInput.value = ''
-  const others = [...users.values()].filter(u => u.id !== me.id && !memberIDs(current ?? { id: '', kind: 'channel', heads: [] }).includes(u.id))
+  const others = [...users.values()]
+    .filter(u => u.id !== me.id && !memberIDs(current ?? { id: '', kind: 'channel', heads: [] }).includes(u.id))
+    .sort((a, b) => nameOf(a.id).localeCompare(nameOf(b.id)))
   select.replaceChildren(
     new Option('— someone this node knows —', ''),
-    ...others.map(u => new Option(`${u.name} (${u.node.slice(0, 8)})`, u.id)),
+    ...others.map(u => new Option(`${nameOf(u.id)} (${u.node.slice(0, 8)})`, u.id)),
   )
   $('pick-title').textContent = title
   pick.showModal()
@@ -323,10 +405,20 @@ async function pickUser(title: string): Promise<Membership | undefined> {
   })
 }
 
+// showMe shows who you are in the sidebar.
+function showMe() {
+  const header = $('me')
+  header.replaceChildren()
+  const img = avatarImg(me.id)
+  if (img) header.append(img)
+  header.append(nameOf(me.id))
+  $<HTMLInputElement>('address').value = address(me)
+}
+
 // listen keeps the page live: new events in the open channel, channels
-// appearing, typing and presence.
+// appearing, typing, presence, and profiles changing.
 function listen() {
-  const source = new EventSource('/v1/events?ref=chat.posted&ref=chat.typing&ref=chat.presence')
+  const source = new EventSource('/v1/events?ref=chat.posted&ref=chat.typing&ref=chat.presence&ref=profile.updated')
   source.addEventListener('chat.posted', async ev => {
     const e: Event = JSON.parse((ev as MessageEvent).data)
     const known = channels.some(ch => ch.id === e.channel)
@@ -349,6 +441,15 @@ function listen() {
     else online.delete(user)
     renderMembers()
   })
+  source.addEventListener('profile.updated', async ev => {
+    const { id } = JSON.parse((ev as MessageEvent).data)
+    const known = profiles.get(id)
+    await loadProfiles([{ user: id, node: known?.node ?? users.get(id)?.node ?? '' }], true)
+    if (id === me.id) showMe()
+    renderChannels()
+    renderMembers()
+    if (current) await refresh()
+  })
   source.onerror = () => (statusEl.textContent = 'Reconnecting…')
   source.onopen = () => (statusEl.textContent = '')
   setInterval(renderTyping, 1000)
@@ -367,19 +468,14 @@ async function main() {
   }
   await getAuthorized()
   await login()
-  const known = JSON.parse(localStorage.getItem('chat.me') ?? 'null')
-  me = await ask(known?.id === device.person ? known.name : '')
-  localStorage.setItem('chat.me', JSON.stringify(me))
-  const show = () => {
-    $('me').textContent = me.name
-    $<HTMLInputElement>('address').value = address(me)
-  }
-  show()
+  // This node is where our copies of channels are, and our profile's home.
+  me = await call<User>('register', { signed: await device.sign('chat.user', { time: new Date().toISOString() }) })
+  await loadProfiles([{ user: me.id, node: me.node }])
+  if (!profiles.has(me.id)) await editProfile()
+  showMe()
   $('rename').onclick = async () => {
-    me = await ask(me.name)
-    localStorage.setItem('chat.me', JSON.stringify(me))
-    show()
-    await loadUsers()
+    await editProfile(profiles.get(me.id))
+    showMe()
     renderChannels()
   }
   $('copy').onclick = () => navigator.clipboard.writeText(address(me)).catch(fail)

@@ -13,6 +13,7 @@ network:
 # manifest declares to one of them.
 stores:
   main: {driver: sqlite} # <node name>.main.db in the data directory
+  files: {driver: file} # blobs as files under blobs/ in the data directory
 modules:
   # Lets tools such as the network explorer (web/) inspect this node.
   - name: debug
@@ -23,6 +24,10 @@ modules:
   # without a vault of their own.
   - name: vault
     stores: {data: main}
+  # People's profiles: name, avatar, bio. This node is the home of those who
+  # set theirs here, and serves them to other nodes.
+  - name: profile
+    stores: {data: main, avatars: files}
   # An example module: compiled into the node, or in a process of its own if
   # GREETER_RUN names the command.
   - name: greeter

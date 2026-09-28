@@ -1,10 +1,10 @@
 # yaml-language-server: $schema=../../spec/module.schema.json
 name: chat
-version: 0.2.0
-description: "Realtime chat: channels and direct messages across nodes, with edits, reactions, read receipts and typing. People are their did:key, and sign every event; nodes verify, keep a full copy of each channel a member of theirs is in, and push events to each other. See docs/design/identity-storage-chat.md."
+version: 0.3.0
+description: "Realtime chat: channels and direct messages across nodes, with edits, reactions, read receipts and typing. People are their did:key, and sign every event; nodes verify, keep a full copy of each channel a member of theirs is in, and push events to each other. Names and avatars are the profile module's. See docs/design/identity-storage-chat.md."
 capabilities:
   - name: register
-    description: "Registers a person on this node, or renames them: signed {name, time}, for the purpose chat.user. Their DID is the signer's."
+    description: "Registers a person on this node, where their copies of channels will be: signed {time}, for the purpose chat.user. Their DID is the signer's. Registering again is fine."
     input:
       type: object
       required: [signed]
@@ -21,15 +21,6 @@ capabilities:
       type: object
       properties:
         users: {type: array, items: {$ref: "#/$defs/user"}}
-  - name: user_info
-    description: Returns a person registered on this node, for other nodes.
-    access: network
-    input:
-      type: object
-      required: [id]
-      properties:
-        id: {$ref: "#/$defs/did"}
-    output: {$ref: "#/$defs/user"}
   - name: submit
     description: "Takes an event its author signed, for the purpose chat.event: create, invite, message, edit, reaction or receipt. The node checks it, stores it, tells subscribers, and pushes it to the other members' nodes."
     input:
@@ -158,7 +149,7 @@ stores:
     entities:
       - name: user
         schema: {$ref: "#/$defs/user"}
-        indexes: [name]
+        indexes: [created]
       - name: channel
         schema: {$ref: "#/$defs/channel"}
         indexes: [created]
@@ -182,10 +173,9 @@ $defs:
       delegation: {type: object, description: "The root's delegation to the signer, if a device signed. See spec/identity.md."}
   user:
     type: object
-    required: [id, name, node]
+    required: [id, node]
     properties:
       id: {$ref: "#/$defs/did"}
-      name: {type: string}
       node: {$ref: "#/$defs/node"}
       created: {type: string, format: date-time}
   membership:

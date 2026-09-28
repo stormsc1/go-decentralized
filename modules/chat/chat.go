@@ -73,7 +73,6 @@ func (m *Module) Handlers() map[string]module.Handler {
 	return map[string]module.Handler{
 		"register":     module.HandlerFor(m.register),
 		"users":        module.HandlerFor(m.users),
-		"user_info":    module.HandlerFor(m.userInfo),
 		"submit":       module.HandlerFor(m.submit),
 		"channels":     module.HandlerFor(m.channels),
 		"history":      module.HandlerFor(m.history),
@@ -103,11 +102,11 @@ func (m *Module) Run(ctx context.Context) {
 	}
 }
 
-// User is a person as a node knows them: their DID, the name they gave, and
-// the node they registered on, where their copies of channels are.
+// User is a person as the chat knows them: their DID, and the node they
+// registered on, where their copies of channels are. Names and avatars are
+// the profile module's.
 type User struct {
 	ID      string    `json:"id"`
-	Name    string    `json:"name"`
 	Node    string    `json:"node"`
 	Created time.Time `json:"created"`
 }
@@ -159,10 +158,10 @@ func (m *Module) register(ctx context.Context, in struct {
 		return User{}, module.Errorf(module.CodeInvalidArgument, "%v", err)
 	}
 	var claim struct {
-		Name string `json:"name"`
+		Time time.Time `json:"time"`
 	}
-	if err := json.Unmarshal(in.Signed.Data, &claim); err != nil || claim.Name == "" || len(claim.Name) > 80 {
-		return User{}, module.Errorf(module.CodeInvalidArgument, "a registration is {name, time}, the name 1 to 80 characters")
+	if err := json.Unmarshal(in.Signed.Data, &claim); err != nil || claim.Time.IsZero() {
+		return User{}, module.Errorf(module.CodeInvalidArgument, "a registration is {time}")
 	}
 	var u User
 	version, err := m.env.Entities("user").Get(ctx, who, &u)
@@ -170,11 +169,11 @@ func (m *Module) register(ctx context.Context, in struct {
 		u = User{ID: who, Node: m.env.NodeID, Created: time.Now().UTC()}
 	} else if err != nil {
 		return User{}, err
-	}
-	if u.Node != m.env.NodeID {
+	} else if u.Node != m.env.NodeID {
 		return User{}, module.Errorf(module.CodePermissionDenied, "%s is registered on node %.8s", who, u.Node)
+	} else {
+		return u, nil
 	}
-	u.Name = claim.Name
 	_, err = m.env.Entities("user").PutIf(ctx, u.ID, u, version)
 	return u, err
 }
@@ -184,7 +183,7 @@ func (m *Module) users(ctx context.Context, in struct {
 }) (map[string][]User, error) {
 	users := []User{}
 	if in.IDs == nil {
-		records, err := m.env.Entities("user").Query(ctx, module.Query{OrderBy: "name", Limit: 1000})
+		records, err := m.env.Entities("user").Query(ctx, module.Query{OrderBy: "created", Limit: 1000})
 		if err != nil {
 			return nil, err
 		}
@@ -208,45 +207,17 @@ func (m *Module) users(ctx context.Context, in struct {
 	return map[string][]User{"users": users}, nil
 }
 
-func (m *Module) userInfo(ctx context.Context, in struct {
-	ID string `json:"id"`
-}) (User, error) {
-	var u User
-	if _, err := m.env.Entities("user").Get(ctx, in.ID, &u); notFound(err) || (err == nil && u.Node != m.env.NodeID) {
-		return User{}, module.Errorf(module.CodeNotFound, "%s isn't registered here", in.ID)
-	} else if err != nil {
-		return User{}, err
-	}
-	return u, nil
-}
-
-// learn makes sure the node knows the person id, whose copies are on node:
-// asking that node their name if it doesn't, and again later if it couldn't.
-// Nodes trust what a person's own node says about their name, for now.
+// learn makes sure the node knows the person id, whose copies are on node.
 func (m *Module) learn(ctx context.Context, id, node string) {
 	var u User
-	version, err := m.env.Entities("user").Get(ctx, id, &u)
-	if err == nil && (u.Node == m.env.NodeID || u.Name != placeholder(id)) {
+	if _, err := m.env.Entities("user").Get(ctx, id, &u); err == nil {
 		return
 	}
-	if err != nil {
-		u = User{ID: id, Name: placeholder(id), Node: node, Created: time.Now().UTC()}
-	}
-	if node != m.env.NodeID {
-		var theirs User
-		ctx, cancel := context.WithTimeout(ctx, pushTimeout)
-		defer cancel()
-		if err := m.env.CallNode(ctx, node, Name+".user_info", map[string]string{"id": id}, &theirs); err == nil && theirs.ID == id {
-			u.Name = theirs.Name
-		}
-	}
-	if _, err := m.env.Entities("user").PutIf(ctx, id, u, version); err != nil && module.Code(err) != module.CodeConflict {
+	u = User{ID: id, Node: node, Created: time.Now().UTC()}
+	if _, err := m.env.Entities("user").PutIf(ctx, id, u, 0); err != nil && module.Code(err) != module.CodeConflict {
 		slog.Warn("chat: can't keep a person", "id", id, "err", err)
 	}
 }
-
-// placeholder names a person whose node couldn't be asked yet.
-func placeholder(id string) string { return id[len(id)-8:] }
 
 // memberships returns who is in the channel id.
 func (m *Module) memberships(ctx context.Context, id string) ([]Membership, error) {
@@ -792,14 +763,6 @@ func (m *Module) syncAll(ctx context.Context) {
 		for _, node := range m.others(ch) {
 			if err := m.syncWith(ctx, node, ch); err != nil {
 				slog.Debug("chat: sync failed", "node", node, "channel", ch.ID, "err", err)
-				continue
-			}
-			// The node answers, so people there whose names couldn't be
-			// asked before can be now.
-			for _, ms := range ch.Members {
-				if ms.Node == node {
-					m.learn(ctx, ms.User, node)
-				}
 			}
 		}
 	}

@@ -12,7 +12,15 @@ Fix: expected relay IDs in the relay config and in relayed addresses.
 Messages carry calls, their ends and calls without one; events only reach
 local tools. Progress and logs need streamed results, with flow control per
 call on process pipes, and modules may want each other's events. Large files
-need a transfer protocol of their own.
+need a transfer protocol of their own: blobs travel base64 in one call, so
+`store.blob_*` and avatars stop at 512 KiB and 256 KiB.
+
+## Profiles' loose ends
+Avatars nobody names any more and copies of strangers are never cleaned up.
+A home node announces every person's DID in the DHT every 10 minutes: with
+thousands of people that needs batching. A profile could name its home
+nodes, signed, so an old home can't serve a stale one. See
+docs/design/profiles.md.
 
 ## Revoking devices
 A person's root key delegates to device keys, which can't be revoked: a lost
