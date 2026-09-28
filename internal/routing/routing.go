@@ -129,6 +129,8 @@ func (r *Routing) Handlers() map[string]module.Handler {
 	hs["list_nodes"] = module.HandlerFor(r.listNodes)
 	hs["find_node"] = module.HandlerFor(r.findNode)
 	hs["find_providers"] = module.HandlerFor(r.findProviders)
+	hs["provide"] = module.HandlerFor(r.provide)
+	hs["withdraw"] = module.HandlerFor(r.withdraw)
 	return hs
 }
 
@@ -155,13 +157,36 @@ type providers struct {
 }
 
 func (r *Routing) findProviders(ctx context.Context, in struct {
-	Capability string `json:"capability"`
+	Key        string `json:"key"`
+	Capability string `json:"capability"` // the key, as it was first called
 }) (providers, error) {
-	found, err := r.dht.FindProviders(ctx, in.Capability)
+	if in.Key == "" {
+		in.Key = in.Capability
+	}
+	if in.Key == "" {
+		return providers{}, module.Errorf(module.CodeInvalidArgument, "a key to find the providers of")
+	}
+	found, err := r.dht.FindProviders(ctx, in.Key)
 	if err != nil {
 		return providers{}, module.Errorf(module.CodeUnavailable, "%v", err)
 	}
 	return providers{Providers: found}, nil
+}
+
+type key struct {
+	Key string `json:"key"`
+}
+
+// provide announces this node as a provider of a key, for a module: e.g.
+// the DID of a person whose profile is here.
+func (r *Routing) provide(ctx context.Context, in key) (struct{}, error) {
+	r.dht.Provide(ctx, in.Key)
+	return struct{}{}, nil
+}
+
+func (r *Routing) withdraw(_ context.Context, in key) (struct{}, error) {
+	r.dht.Withdraw(in.Key)
+	return struct{}{}, nil
 }
 
 // Resolve returns how to reach the node id, see find.

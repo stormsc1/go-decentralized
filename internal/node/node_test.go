@@ -688,3 +688,30 @@ func launch(t *testing.T, bootstrap []string, mc ModuleConfig, opts ...func(*Con
 	}
 	return n, url, stop
 }
+
+// A module announces a key of its own, such as a person's DID, and other
+// nodes find the node by it, as they find capabilities.
+func TestProvide(t *testing.T) {
+	ctx := context.Background()
+	home, homeAddr := start(t, nil, ModuleConfig{Name: "echo"})
+	other, _ := start(t, []string{homeAddr}, ModuleConfig{Name: "echo"})
+	if _, err := home.Call(ctx, "echo.provide", json.RawMessage(`{"key":"did:key:zAlice"}`)); err != nil {
+		t.Fatal(err)
+	}
+	var found struct{ Providers []struct{ ID string } }
+	for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+		result, err := other.Call(ctx, "routing.find_providers", json.RawMessage(`{"key":"did:key:zAlice"}`))
+		if err == nil {
+			_ = json.Unmarshal(result, &found)
+		}
+		if len(found.Providers) == 1 && found.Providers[0].ID == home.ID {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("providers of the key = %+v, %v; want home %.8s", found, err, home.ID)
+		}
+	}
+	if result, _ := other.Call(ctx, "routing.find_providers", json.RawMessage(`{"key":"did:key:zNobody"}`)); !strings.Contains(string(result), `"providers":null`) && !strings.Contains(string(result), `"providers":[]`) {
+		t.Fatalf("providers of a key nobody announced = %s", result)
+	}
+}

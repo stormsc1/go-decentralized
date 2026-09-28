@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"sync"
 	"time"
 
 	"go-decentralized/internal/network"
@@ -41,7 +42,8 @@ type Config struct {
 	// Republish is how often the node re-announces its record and what it
 	// provides. Records live for 3x Republish.
 	Republish time.Duration
-	// Provides returns the keys (capability refs) this node announces.
+	// Provides returns the keys (capability refs) this node announces,
+	// besides those given to Provide.
 	Provides func() []string
 	// Changed, if set, is told the routing table's contents whenever they
 	// change, from Run.
@@ -53,6 +55,9 @@ type DHT struct {
 	id        ID
 	table     *Table
 	providers *providers
+
+	mu    sync.Mutex
+	extra map[string]struct{} // keys given to Provide
 }
 
 func New(cfg Config) *DHT {
@@ -62,7 +67,41 @@ func New(cfg Config) *DHT {
 		id:        id,
 		table:     NewTable(id),
 		providers: newProviders(3 * cfg.Republish),
+		extra:     map[string]struct{}{},
 	}
+}
+
+// Provide announces this node as a provider of key, now and at every
+// republish until Withdraw: e.g. a person's DID, for the node their profile
+// is on.
+func (d *DHT) Provide(ctx context.Context, key string) {
+	d.mu.Lock()
+	d.extra[key] = struct{}{}
+	d.mu.Unlock()
+	if d.table.Len() == 0 {
+		return // announced once joined
+	}
+	if rec, ok := d.record(ctx); ok {
+		d.announceKey(ctx, HashKey(key), rec)
+	}
+}
+
+// Withdraw stops announcing key; what was announced expires by itself.
+func (d *DHT) Withdraw(key string) {
+	d.mu.Lock()
+	delete(d.extra, key)
+	d.mu.Unlock()
+}
+
+// provides returns every key this node announces.
+func (d *DHT) provides() []string {
+	keys := d.cfg.Provides()
+	d.mu.Lock()
+	for key := range d.extra {
+		keys = append(keys, key)
+	}
+	d.mu.Unlock()
+	return keys
 }
 
 // self is the contact this node sends with every call.
@@ -231,29 +270,40 @@ func (d *DHT) refresh(ctx context.Context) error {
 	return nil
 }
 
-// announce stores this node's record on the K nodes closest to its own ID,
-// so it can be found by ID, and to each key it provides.
-func (d *DHT) announce(ctx context.Context) {
+// record signs this node's record, if it can be reached at all.
+func (d *DHT) record(ctx context.Context) (Record, bool) {
 	addrs := d.cfg.Addrs()
 	if len(addrs) == 0 {
-		return // unreachable: nothing to announce
+		return Record{}, false // unreachable: nothing to announce
 	}
 	rec, err := newRecord(ctx, d.cfg.Sign, d.cfg.PublicKey, d.cfg.Name, addrs)
 	if err != nil {
 		slog.Warn("routing: can't sign record", "err", err)
+		return Record{}, false
+	}
+	return rec, true
+}
+
+// announce stores this node's record on the K nodes closest to its own ID,
+// so it can be found by ID, and to each key it provides.
+func (d *DHT) announce(ctx context.Context) {
+	rec, ok := d.record(ctx)
+	if !ok {
 		return
 	}
-	keys := []ID{d.id}
-	for _, key := range d.cfg.Provides() {
-		keys = append(keys, HashKey(key))
+	d.announceKey(ctx, d.id, rec)
+	for _, key := range d.provides() {
+		d.announceKey(ctx, HashKey(key), rec)
 	}
-	for _, k := range keys {
-		d.providers.add(k, rec)
-		closest, _ := d.lookup(ctx, k, capFindNode)
-		for _, c := range closest {
-			if _, err := d.call(ctx, peerOf(c), capAddProvider, request{Target: k, Record: &rec}); err != nil {
-				d.table.Remove(c.ID)
-			}
+}
+
+// announceKey stores rec, this node's record, on the K nodes closest to k.
+func (d *DHT) announceKey(ctx context.Context, k ID, rec Record) {
+	d.providers.add(k, rec)
+	closest, _ := d.lookup(ctx, k, capFindNode)
+	for _, c := range closest {
+		if _, err := d.call(ctx, peerOf(c), capAddProvider, request{Target: k, Record: &rec}); err != nil {
+			d.table.Remove(c.ID)
 		}
 	}
 }

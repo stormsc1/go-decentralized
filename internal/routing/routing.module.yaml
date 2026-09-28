@@ -18,16 +18,32 @@ capabilities:
         id: {$ref: "#/$defs/id"}
     output: {$ref: "#/$defs/node"}
   - name: find_providers
-    description: Finds the nodes that provide a capability, e.g. capability=debug.report.
+    description: "Finds the nodes that provide a key: a capability ref such as debug.report, or a key a module announced with provide, such as a person's DID."
     input:
       type: object
-      required: [capability]
       properties:
-        capability: {type: string, description: "A capability ref: <module>.<capability>."}
+        key: {type: string}
+        capability: {type: string, description: The key, as it was first called.}
     output:
       type: object
       properties:
         providers: {type: array, items: {$ref: "#/$defs/node"}}
+  - name: provide
+    description: "Announces this node as a provider of a key, now and at every republish until withdrawn: e.g. the DID of a person whose profile is here. Capabilities with network access are announced by themselves."
+    internal: true
+    input:
+      type: object
+      required: [key]
+      properties:
+        key: {type: string, minLength: 1, maxLength: 512}
+  - name: withdraw
+    description: Stops announcing a key; what was announced expires by itself.
+    internal: true
+    input:
+      type: object
+      required: [key]
+      properties:
+        key: {type: string, minLength: 1, maxLength: 512}
 
   # The DHT's protocol, between nodes. See spec/routing.md.
   - name: dht_find_node
